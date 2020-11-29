@@ -1,0 +1,132 @@
+﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+
+namespace IssueLabelWatcherWebJob
+{
+    public interface ITargetRepo
+    {
+        string FullName { get; }
+        string Owner { get; }
+        string Name { get; }
+        string[] TargetLabels { get; }
+    }
+
+    public interface IIlwConfiguration
+    {
+        bool EnableFindAllLabelledIssues { get; }
+        string FindAllLabelledIssuesTiming { get; }
+        string FindRecentLabelledIssuesTiming { get; }
+        string GithubPersonalAccessToken { get; }
+        bool RandomlyDelayFindRecentLabelledIssues { get; }
+        ITargetRepo[] Repos { get; }
+        string SmtpServer { get; }
+        int? SmtpPort { get; }
+        string SmtpFrom { get; }
+        string SmtpTo { get; }
+        string SmtpUsername { get; }
+        string SmtpPassword { get; }
+    }
+
+    public class TargetRepo : ITargetRepo
+    {
+        public string FullName { get; set; }
+        public string Owner { get; set; }
+        public string Name { get; set; }
+        public string[] TargetLabels { get; set; }
+    }
+
+    public class IlwConfiguration : IIlwConfiguration
+    {
+        public const string EnableFindAllLabelledIssuesKey = "ilw:EnableFindAllLabelledIssues";
+        public const string FindAllLabelledIssuesTimingKey = "ilw:FindAllLabelledIssuesTiming";
+        public const string FindRecentLabelledIssuesTimingKey = "ilw:FindRecentLabelledIssuesTiming";
+        public const string GithubPersonalAccessTokenKey = "ilw:GithubPersonalAccessToken";
+        public const string RandomlyDelayFindRecentLabelledIssuesKey = "ilw:RandomlyDelayFindRecentLabelledIssues";
+        public const string ReposKey = "ilw:Repos";
+        public const string RepoLabelsKeyFormat = "ilw:Repo:{0}:Labels";
+        public const string SmtpServerKey = "ilw:SmtpServer";
+        public const string SmtpPortKey = "ilw:SmtpPort";
+        public const string SmtpFromKey = "ilw:SmtpFrom";
+        public const string SmtpToKey = "ilw:SmtpTo";
+        public const string SmtpUsernameKey = "ilw:SmtpUsername";
+        public const string SmtpPasswordKey = "ilw:SmtpPassword";
+
+        private readonly ILogger _logger;
+
+        public IlwConfiguration(IConfiguration configuration, ILogger<IlwConfiguration> logger)
+        {
+            _logger = logger;
+
+            this.EnableFindAllLabelledIssues = configuration.GetValue<bool?>(EnableFindAllLabelledIssuesKey) == true;
+            this.FindAllLabelledIssuesTiming = configuration.GetValue(FindAllLabelledIssuesTimingKey, "0 0 0 * * *");
+            this.FindRecentLabelledIssuesTiming = configuration.GetValue(FindRecentLabelledIssuesTimingKey, "00:15:00");
+            this.GithubPersonalAccessToken = configuration.GetValue<string>(GithubPersonalAccessTokenKey);
+            this.RandomlyDelayFindRecentLabelledIssues = configuration.GetValue<bool?>(RandomlyDelayFindRecentLabelledIssuesKey) == true;
+            this.SmtpServer = configuration.GetValue<string>(SmtpServerKey);
+            this.SmtpPort = configuration.GetValue<int?>(SmtpPortKey);
+            this.SmtpFrom = configuration.GetValue<string>(SmtpFromKey);
+            this.SmtpTo = configuration.GetValue<string>(SmtpToKey);
+            this.SmtpUsername = configuration.GetValue<string>(SmtpUsernameKey);
+            this.SmtpPassword = configuration.GetValue<string>(SmtpPasswordKey);
+
+            var repos = new List<TargetRepo>();
+            var repoStrings = configuration.GetValue<string>(ReposKey)
+                                          ?.Split(';', StringSplitOptions.RemoveEmptyEntries)
+                                          ?.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (repoStrings != null)
+            {
+                foreach (var repoString in repoStrings)
+                {
+                    var repoTokens = repoString.Split(new char[] { '/' }, 2);
+                    if (repoTokens.Length < 2) continue;
+
+                    var labels = configuration.GetValue<string>(string.Format(RepoLabelsKeyFormat, repoString))
+                                             ?.Split(';', StringSplitOptions.RemoveEmptyEntries)
+                                             ?.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    repos.Add(new TargetRepo
+                    {
+                        FullName = repoString,
+                        Owner = repoTokens[0],
+                        Name = repoTokens[1],
+                        TargetLabels = labels?.ToArray() ?? new string[0],
+                    });
+                }
+            }
+            this.Repos = repos.ToArray();
+
+            PrintConfiguration();
+        }
+
+        private void PrintConfiguration()
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"Repositories: {this.Repos.Length}");
+            foreach (var repo in this.Repos)
+            {
+                sb.AppendLine($"    {repo.Owner}/{repo.Name}: {repo.TargetLabels?.Length}");
+                foreach (var label in repo.TargetLabels)
+                {
+                    sb.AppendLine($"        {label}");
+                }
+            }
+            _logger.LogInformation(sb.ToString());
+        }
+
+        public bool EnableFindAllLabelledIssues { get; }
+        public string FindAllLabelledIssuesTiming { get; }
+        public string FindRecentLabelledIssuesTiming { get; }
+        public string GithubPersonalAccessToken { get; }
+        public bool RandomlyDelayFindRecentLabelledIssues { get; }
+        public ITargetRepo[] Repos { get; }
+        public string SmtpServer { get; }
+        public int? SmtpPort { get; }
+        public string SmtpFrom { get; }
+        public string SmtpTo { get; }
+        public string SmtpUsername { get; }
+        public string SmtpPassword { get; }
+    }
+}

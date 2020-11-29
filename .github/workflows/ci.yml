@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+    branches:
+    - main
+    - dev
+  pull_request:
+    branches:
+    - dev
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v1
+      with:
+        dotnet-version: 3.1.301
+    - name: Set version
+      uses: dotnet/nbgv@v0.4
+      id: nbgv
+    - name: dotnet restore
+      run: dotnet restore
+    - name: dotnet publish
+      run: dotnet publish --configuration Release --self-contained false --no-restore --output App_Data/jobs/continuous/IssueLabelWatcher IssueLabelWatcherWebJob
+    - name: Package
+      if: github.ref == 'refs/heads/main' && github.event.repository.full_name == 'rseanhall/issue-label-watcher'
+      run: zip -r IssueLabelWatcherWebJob.zip App_Data
+    - name: Create Release
+      if: github.ref == 'refs/heads/main' && github.event.repository.full_name == 'rseanhall/issue-label-watcher'
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ steps.nbgv.outputs.SemVer2 }}
+        release_name: v${{ steps.nbgv.outputs.SemVer2 }}
+    - name: Upload Release Asset
+      if: github.ref == 'refs/heads/main' && github.event.repository.full_name == 'rseanhall/issue-label-watcher'
+      id: upload_release_asset 
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./IssueLabelWatcherWebJob.zip
+        asset_name: IssueLabelWatcherWebJob.zip
+        asset_content_type: application/zip
