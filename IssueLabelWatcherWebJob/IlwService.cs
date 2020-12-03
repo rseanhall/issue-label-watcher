@@ -56,7 +56,7 @@ namespace IssueLabelWatcherWebJob
 
                     foreach (var issue in relevantIssues)
                     {
-                        sb.AppendLine($"    {issue.Number} {issue.Status} {issue.Title}");
+                        sb.AppendLine($"    {issue.Number} {issue.Status} {issue.IssueType} {issue.Title}");
                         sb.AppendLine($"        {issue.Url} {issue.IsAlreadyViewed}");
                     }
                 }
@@ -104,8 +104,8 @@ namespace IssueLabelWatcherWebJob
                 {
                     var labels = string.Join(", ", issue.Labels.Select(x => HttpUtility.HtmlEncode(x)));
                     var safeTitle = HttpUtility.HtmlEncode(issue.Title);
-                    fragment.AppendLine($"<tr><td><a href=\"{issue.Url}\">{issue.Number}</a></td><td>{issue.Status}</td><td>{safeTitle}</td></tr>");
-                    fragment.AppendLine($"<tr><td></td><td></td><td><i>{labels}</i></td></tr>");
+                    fragment.AppendLine($"<tr><td><a href=\"{issue.Url}\">{issue.Number}</a></td><td>{issue.IssueType}</td><td>{safeTitle}</td></tr>");
+                    fragment.AppendLine($"<tr><td></td><td>{issue.Status}</td><td><i>{labels}</i></td></tr>");
                 }
                 fragment.AppendLine("</table>");
 

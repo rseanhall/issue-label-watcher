@@ -15,6 +15,7 @@ namespace IssueLabelWatcherWebJob
     {
         ITargetRepo Repo { get; }
         bool IsAlreadyViewed { get; set; }
+        string IssueType { get; }
         string[] Labels { get; }
         string Number { get; }
         string Status { get; }
@@ -38,6 +39,7 @@ namespace IssueLabelWatcherWebJob
     {
         public ITargetRepo Repo { get; set; }
         public bool IsAlreadyViewed { get; set; }
+        public string IssueType { get; set; }
         public string[] Labels { get; set; }
         public string Number { get; set; }
         public string Status { get; set; }
@@ -58,6 +60,7 @@ namespace IssueLabelWatcherWebJob
         public string RepoAlias { get; set; }
         public List<GithubIssueListLabel> Labels { get; set; }
         public List<GithubIssue> Issues { get; set; }
+        public GithubIssueListWatchPinned WatchPinned { get; set; }
     }
 
     public class GithubIssueListLabel
@@ -74,6 +77,20 @@ namespace IssueLabelWatcherWebJob
         public string IncludeVariableName { get; set; }
     }
 
+    public class GithubIssueListWatchPinned
+    {
+        public GithubIssueListWatchPinned(bool enabled, string repoAlias)
+        {
+            this.Enabled = enabled;
+            this.AfterVariableName = $"pinned_after_{repoAlias}";
+            this.IncludeVariableName = $"pinned_include_{repoAlias}";
+        }
+
+        public bool Enabled { get; set; }
+        public string AfterVariableName { get; set; }
+        public string IncludeVariableName { get; set; }
+    }
+
     public class GithubService : IGithubService
     {
         private readonly IIlwConfiguration _configuration;
@@ -86,6 +103,7 @@ namespace IssueLabelWatcherWebJob
             _graphqlGithubClient = new GraphQLHttpClient("https://api.github.com/graphql", new NewtonsoftJsonSerializer());
             _graphqlGithubClient.HttpClient.DefaultRequestHeaders.Add("Authorization", $"bearer {_configuration.GithubPersonalAccessToken}");
             _graphqlGithubClient.HttpClient.DefaultRequestHeaders.Add("User-Agent", $"issue-label-watcher-{ThisAssembly.AssemblyInformationalVersion}");
+            _graphqlGithubClient.HttpClient.DefaultRequestHeaders.Add("Accept", "application/vnd.github.elektra-preview+json");
         }
 
         private bool CanMakeGraphQLRequests(RateLimit rateLimit)
@@ -114,16 +132,37 @@ namespace IssueLabelWatcherWebJob
             AppendIndentedLine(sb, --i, "}"); //rateLimit
             foreach (var targetRepo in _configuration.Repos)
             {
+                var repoAlias = GetGraphQLAlias($"{targetRepo.Owner}_{targetRepo.Name}");
                 var repo = new GithubIssueListByRepo
                 {
                     Issues = new List<GithubIssue>(),
                     Labels = new List<GithubIssueListLabel>(),
                     Repo = targetRepo,
-                    RepoAlias = GetGraphQLAlias($"{targetRepo.Owner}_{targetRepo.Name}"),
+                    RepoAlias = repoAlias,
+                    WatchPinned = new GithubIssueListWatchPinned(targetRepo.WatchPinnedIssues, repoAlias),
                 };
                 repoList.Add(repo);
 
                 AppendIndentedLine(sb, i++, string.Format("{0}: repository(owner:\"{1}\", name:\"{2}\") {{", repo.RepoAlias, targetRepo.Owner, targetRepo.Name));
+
+                if (repo.WatchPinned.Enabled)
+                {
+                    sb.Insert(newVariableIndex, $", ${repo.WatchPinned.AfterVariableName}:String, ${repo.WatchPinned.IncludeVariableName}:Boolean!");
+                    variables[repo.WatchPinned.AfterVariableName] = null;
+                    variables[repo.WatchPinned.IncludeVariableName] = true;
+
+                    AppendIndentedLine(sb, i++, string.Format("pinnedIssues(first:100, after:${0}) @include(if:${1}) {{", repo.WatchPinned.AfterVariableName, repo.WatchPinned.IncludeVariableName));
+                    AppendIndentedLine(sb, i++, "nodes {");
+                    AppendIndentedLine(sb, i++, "issue {");
+                    AppendIndentedLine(sb, i, "...issueFields");
+                    AppendIndentedLine(sb, --i, "}"); //pinnedIssues/nodes/issue
+                    AppendIndentedLine(sb, --i, "}"); //pinnedIssues/nodes
+                    AppendIndentedLine(sb, i++, "pageInfo {");
+                    AppendIndentedLine(sb, i, "endCursor");
+                    AppendIndentedLine(sb, i, "hasNextPage");
+                    AppendIndentedLine(sb, --i, "}"); //pinnedIssues/pageInfo
+                    AppendIndentedLine(sb, --i, "}"); //pinnedIssues
+                }
 
                 foreach (var targetLabel in targetRepo.TargetLabels)
                 {
@@ -138,17 +177,7 @@ namespace IssueLabelWatcherWebJob
                     AppendIndentedLine(sb, i++, string.Format("{0}: issues(filterBy:{1}, after:${2}, first:100, orderBy: {3}) @include(if:${4}) {{",
                         label.Alias, issueFilter, label.AfterVariableName, "{ field:UPDATED_AT, direction:DESC }", label.IncludeVariableName));
                     AppendIndentedLine(sb, i++, "nodes {");
-                    AppendIndentedLine(sb, i, "number");
-                    AppendIndentedLine(sb, i, "state");
-                    AppendIndentedLine(sb, i, "title");
-                    AppendIndentedLine(sb, i, "updatedAt");
-                    AppendIndentedLine(sb, i, "url");
-                    AppendIndentedLine(sb, i, "viewerSubscription");
-                    AppendIndentedLine(sb, i++, "labels(first:100) {");
-                    AppendIndentedLine(sb, i++, "nodes {");
-                    AppendIndentedLine(sb, i, "name");
-                    AppendIndentedLine(sb, --i, "}"); //issues/nodes/labels/nodes
-                    AppendIndentedLine(sb, --i, "}"); //issues/nodes/labels
+                    AppendIndentedLine(sb, i, "...issueFields");
                     AppendIndentedLine(sb, --i, "}"); //issues/nodes
                     AppendIndentedLine(sb, i++, "pageInfo {");
                     AppendIndentedLine(sb, i, "endCursor");
@@ -159,6 +188,20 @@ namespace IssueLabelWatcherWebJob
                 AppendIndentedLine(sb, --i, "}"); //repository
             }
             sb.AppendLine("}"); //query
+            sb.AppendLine();
+            sb.AppendLine("fragment issueFields on Issue {");
+            AppendIndentedLine(sb, i, "number");
+            AppendIndentedLine(sb, i, "state");
+            AppendIndentedLine(sb, i, "title");
+            AppendIndentedLine(sb, i, "updatedAt");
+            AppendIndentedLine(sb, i, "url");
+            AppendIndentedLine(sb, i, "viewerSubscription");
+            AppendIndentedLine(sb, i++, "labels(first:100) {");
+            AppendIndentedLine(sb, i++, "nodes {");
+            AppendIndentedLine(sb, i, "name");
+            AppendIndentedLine(sb, --i, "}"); //labels/nodes
+            AppendIndentedLine(sb, --i, "}"); //labels
+            sb.AppendLine("}"); //fragment
 
             var query = sb.ToString();
             variables["dryRun"] = true;
@@ -197,6 +240,19 @@ namespace IssueLabelWatcherWebJob
                         continue;
                     }
 
+                    var pinnedIssueResult = repoObject["pinnedIssues"]?.ToObject<GraphQLPinnedIssueResult>();
+                    if (pinnedIssueResult != null)
+                    {
+                        variables[repo.WatchPinned.AfterVariableName] = pinnedIssueResult.PageInfo.EndCursor;
+                        variables[repo.WatchPinned.IncludeVariableName] = pinnedIssueResult.PageInfo.HasNextPage;
+                        hasMorePages |= pinnedIssueResult.PageInfo.HasNextPage;
+
+                        foreach (var node in pinnedIssueResult.Nodes)
+                        {
+                            ProcessIssue(node.Issue, repo, "Pinned");
+                        }
+                    }
+
                     foreach (var labelAlias in repo.Labels)
                     {
                         var labelResult = repoObject[labelAlias.Alias]?.ToObject<GraphQLLabelResult>();
@@ -211,19 +267,7 @@ namespace IssueLabelWatcherWebJob
 
                         foreach (var issue in labelResult.Nodes)
                         {
-                            var newIssue = new GithubIssue
-                            {
-                                IsAlreadyViewed = issue.ViewerSubscription != "UNSUBSCRIBED",
-                                Labels = issue.Labels.Nodes.Select(n => n.Name).ToArray(),
-                                Number = issue.Number,
-                                Repo = repo.Repo,
-                                Status = issue.State,
-                                Title = issue.Title,
-                                UpdatedAt = issue.UpdatedAt,
-                                Url = issue.Url,
-                            };
-
-                            repo.Issues.Add(newIssue);
+                            ProcessIssue(issue, repo);
                         }
                     }
                 }
@@ -231,6 +275,24 @@ namespace IssueLabelWatcherWebJob
 
             var results = repoList.Select(x => new GithubIssuesByRepo { Repo = x.Repo, Issues = x.Issues.ToArray() }).ToArray();
             return results;
+        }
+
+        private static void ProcessIssue(GraphQLIssue issue, GithubIssueListByRepo repo, string issueType = "Issue")
+        {
+            var newIssue = new GithubIssue
+            {
+                IsAlreadyViewed = issue.ViewerSubscription != "UNSUBSCRIBED",
+                IssueType = issueType,
+                Labels = issue.Labels.Nodes.Select(n => n.Name).ToArray(),
+                Number = issue.Number,
+                Repo = repo.Repo,
+                Status = issue.State,
+                Title = issue.Title,
+                UpdatedAt = issue.UpdatedAt,
+                Url = issue.Url,
+            };
+
+            repo.Issues.Add(newIssue);
         }
 
         private static void AppendIndentedLine(StringBuilder sb, int i, string s)
@@ -289,6 +351,17 @@ namespace IssueLabelWatcherWebJob
         public class GraphQLIssueLabel
         {
             public string Name { get; set; }
+        }
+
+        public class GraphQLPinnedIssueResult
+        {
+            public GraphQLPinnedIssue[] Nodes { get; set; }
+            public GraphQLPageInfo PageInfo { get; set; }
+        }
+
+        public class GraphQLPinnedIssue
+        {
+            public GraphQLIssue Issue { get; set; }
         }
     }
 }

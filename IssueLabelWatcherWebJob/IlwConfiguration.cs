@@ -13,6 +13,7 @@ namespace IssueLabelWatcherWebJob
         string Owner { get; }
         string Name { get; }
         string[] TargetLabels { get; }
+        bool WatchPinnedIssues { get; }
     }
 
     public interface IIlwConfiguration
@@ -37,6 +38,7 @@ namespace IssueLabelWatcherWebJob
         public string Owner { get; set; }
         public string Name { get; set; }
         public string[] TargetLabels { get; set; }
+        public bool WatchPinnedIssues { get; set; }
     }
 
     public class IlwConfiguration : IIlwConfiguration
@@ -48,6 +50,7 @@ namespace IssueLabelWatcherWebJob
         public const string RandomlyDelayFindRecentLabelledIssuesKey = "ilw:RandomlyDelayFindRecentLabelledIssues";
         public const string ReposKey = "ilw:Repos";
         public const string RepoLabelsKeyFormat = "ilw:Repo:{0}:Labels";
+        public const string RepoWatchPinnedLabelsKeyFormat = "ilw:Repo:{0}:WatchPinnedIssues";
         public const string SmtpServerKey = "ilw:SmtpServer";
         public const string SmtpPortKey = "ilw:SmtpPort";
         public const string SmtpFromKey = "ilw:SmtpFrom";
@@ -87,12 +90,14 @@ namespace IssueLabelWatcherWebJob
                     var labels = configuration.GetValue<string>(string.Format(RepoLabelsKeyFormat, repoString))
                                              ?.Split(';', StringSplitOptions.RemoveEmptyEntries)
                                              ?.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var watchPinnedIssues = configuration.GetValue<bool?>(string.Format(RepoWatchPinnedLabelsKeyFormat, repoString));
                     repos.Add(new TargetRepo
                     {
                         FullName = repoString,
                         Owner = repoTokens[0],
                         Name = repoTokens[1],
                         TargetLabels = labels?.ToArray() ?? new string[0],
+                        WatchPinnedIssues = watchPinnedIssues.HasValue && watchPinnedIssues.Value,
                     });
                 }
             }
