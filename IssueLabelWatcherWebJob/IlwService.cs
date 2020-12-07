@@ -82,10 +82,12 @@ namespace IssueLabelWatcherWebJob
                     if (!stateIssues.Add(issue.Number))
                     {
                         issue.IsAlreadyViewed = true;
-                        continue;
                     }
 
-                    issues.Add(issue);
+                    if (!issue.IsAlreadyViewed)
+                    {
+                        issues.Add(issue);
+                    }
                 }
 
                 if (!issues.Any())
