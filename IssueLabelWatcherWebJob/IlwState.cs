@@ -1,7 +1,10 @@
-﻿using Newtonsoft.Json;
+﻿using Microsoft.WindowsAzure.Storage;
+using Microsoft.WindowsAzure.Storage.Blob;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace IssueLabelWatcherWebJob
 {
@@ -12,36 +15,89 @@ namespace IssueLabelWatcherWebJob
 
     public class IlwState : IIlwState
     {
-        public Dictionary<string, HashSet<string>> IssuesByRepo { get; private set; }
+        public Dictionary<string, HashSet<string>> IssuesByRepo { get; set; }
+    }
 
-        public void Load(string json)
+    public interface IIlwStateService
+    {
+        Task<IIlwState> Load();
+        Task Save(IIlwState state);
+    }
+
+    public class IlwStateService : IIlwStateService
+    {
+        private CloudBlockBlob _blob;
+        private readonly IIlwConfiguration _configuration;
+
+        public IlwStateService(IIlwConfiguration configuration)
         {
-            this.IssuesByRepo = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
-
-            if (json == null)
-            {
-                return;
-            }
-
-            var state = JsonConvert.DeserializeObject<IlwStateObject>(json);
-            foreach (var repo in state.Repos)
-            {
-                this.IssuesByRepo.Add(repo.FullName, new HashSet<string>(repo.IssueNumbers));
-            }
+            _configuration = configuration;
         }
 
-        public string Save()
+        public async Task<IIlwState> Load()
         {
-            var state = new IlwStateObject
+            var state = new IlwState
             {
-                Repos = this.IssuesByRepo.Select(x => new IlwStateObject.Repo
+                IssuesByRepo = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase),
+            };
+
+            var json = await this.ReadBlob();
+            if (json != null)
+            {
+                var stateObject = JsonConvert.DeserializeObject<IlwStateObject>(json);
+                foreach (var repo in stateObject.Repos)
+                {
+                    state.IssuesByRepo.Add(repo.FullName, new HashSet<string>(repo.IssueNumbers));
+                }
+            }
+
+            return state;
+        }
+
+        public Task Save(IIlwState state)
+        {
+            var stateObject = new IlwStateObject
+            {
+                Repos = state.IssuesByRepo.Select(x => new IlwStateObject.Repo
                 {
                     FullName = x.Key,
                     IssueNumbers = x.Value.ToArray(),
                 }).ToArray(),
             };
 
-            return JsonConvert.SerializeObject(state);
+            var json = JsonConvert.SerializeObject(stateObject);
+            return this.WriteBlob(json);
+        }
+
+        private async Task<CloudBlockBlob> GetBlob()
+        {
+            if (_blob == null)
+            {
+                var storageAccount = CloudStorageAccount.Parse(_configuration.StorageAccountConnectionString);
+                var blobClient = storageAccount.CreateCloudBlobClient();
+                var container = blobClient.GetContainerReference("issue-label-watcher");
+                await container.CreateIfNotExistsAsync();
+                _blob = container.GetBlockBlobReference("state");
+            }
+
+            return _blob;
+        }
+
+        private async Task<string> ReadBlob()
+        {
+            var blob = await this.GetBlob();
+            if (!await blob.ExistsAsync())
+            {
+                return null;
+            }
+
+            return await blob.DownloadTextAsync();
+        }
+
+        private async Task WriteBlob(string content)
+        {
+            var blob = await this.GetBlob();
+            await blob.UploadTextAsync(content);
         }
     }
 

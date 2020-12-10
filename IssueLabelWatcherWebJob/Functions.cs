@@ -1,5 +1,4 @@
 ﻿using System;
-using System.IO;
 using System.Threading.Tasks;
 using Microsoft.Azure.WebJobs;
 using Microsoft.Azure.WebJobs.Extensions.Timers;
@@ -9,33 +8,31 @@ namespace IssueLabelWatcherWebJob
 {
     public class Functions
     {
-        const string IlwBlobName = "issue-label-watcher/state";
+        private const string SingletonScopeName = "IssuesLock";
         private readonly IIlwService _ilwService;
+        private readonly IIlwStateService _ilwStateService;
 
-        public Functions(IIlwService ilwService)
+        public Functions(IIlwService ilwService, IIlwStateService ilwStateService)
         {
             _ilwService = ilwService;
+            _ilwStateService = ilwStateService;
         }
 
-        [Singleton("IssuesLock", SingletonScope.Host)]
-        [return: Blob(IlwBlobName, FileAccess.Write)]
-        public async Task<string> FindRecentLabelledIssues([TimerTrigger(typeof(FindRecentLabelledIssuesTiming), RunOnStartup = true, UseMonitor = false)] TimerInfo timerInfo, [Blob(IlwBlobName, FileAccess.Read)] string stateJson)
+        [Singleton(SingletonScopeName, SingletonScope.Host)]
+        public async Task FindRecentLabelledIssues([TimerTrigger(typeof(FindRecentLabelledIssuesTiming), RunOnStartup = true, UseMonitor = false)] TimerInfo timerInfo)
         {
-            var state = new IlwState();
-            state.Load(stateJson);
+            var state = await _ilwStateService.Load();
             await _ilwService.FindAndNotifyRecentLabelledIssues(state, TimeSpan.FromDays(1));
-            return state.Save();
+            await _ilwStateService.Save(state);
         }
 
         [Disable(typeof(DisableFindAllLabelledIssues))]
-        [Singleton("IssuesLock", SingletonScope.Host)]
-        [return: Blob(IlwBlobName, FileAccess.Write)]
-        public async Task<string> FindAllLabelledIssues([TimerTrigger("%" + IlwConfiguration.FindAllLabelledIssuesTimingKey + "%", UseMonitor = false)] TimerInfo timerInfo, [Blob(IlwBlobName, FileAccess.Read)] string stateJson)
+        [Singleton(SingletonScopeName, SingletonScope.Host)]
+        public async Task FindAllLabelledIssues([TimerTrigger("%" + IlwConfiguration.FindAllLabelledIssuesTimingKey + "%", UseMonitor = false)] TimerInfo timerInfo)
         {
-            var state = new IlwState();
-            state.Load(stateJson);
+            var state = await _ilwStateService.Load();
             await _ilwService.FindAndNotifyAllLabelledIssues(state);
-            return state.Save();
+            await _ilwStateService.Save(state);
         }
     }
 

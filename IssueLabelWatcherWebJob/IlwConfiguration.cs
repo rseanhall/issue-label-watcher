@@ -31,6 +31,7 @@ namespace IssueLabelWatcherWebJob
         string SmtpTo { get; }
         string SmtpUsername { get; }
         string SmtpPassword { get; }
+        string StorageAccountConnectionString { get; }
     }
 
     public class TargetRepo : ITargetRepo
@@ -60,6 +61,7 @@ namespace IssueLabelWatcherWebJob
         public const string SmtpToKey = "ilw:SmtpTo";
         public const string SmtpUsernameKey = "ilw:SmtpUsername";
         public const string SmtpPasswordKey = "ilw:SmtpPassword";
+        public const string StorageAccountConnectionStringKey = "AzureWebJobsStorage";
 
         private readonly ILogger _logger;
 
@@ -78,6 +80,7 @@ namespace IssueLabelWatcherWebJob
             this.SmtpTo = configuration.GetValue<string>(SmtpToKey);
             this.SmtpUsername = configuration.GetValue<string>(SmtpUsernameKey);
             this.SmtpPassword = configuration.GetValue<string>(SmtpPasswordKey);
+            this.StorageAccountConnectionString = configuration.GetConnectionStringOrSetting(StorageAccountConnectionStringKey);
 
             var repos = new List<TargetRepo>();
             var repoStrings = configuration.GetValue<string>(ReposKey)
@@ -138,5 +141,6 @@ namespace IssueLabelWatcherWebJob
         public string SmtpTo { get; }
         public string SmtpUsername { get; }
         public string SmtpPassword { get; }
+        public string StorageAccountConnectionString { get; }
     }
 }

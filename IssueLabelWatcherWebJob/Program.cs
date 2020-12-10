@@ -36,6 +36,7 @@ namespace IssueLabelWatcherWebJob
                     s.AddSingleton<INameResolver, IlwNameResolver>();
                     s.AddSingleton<IEmailSender, SmtpEmailSender>();
                     s.AddSingleton<IGithubService, GithubService>();
+                    s.AddSingleton<IIlwStateService, IlwStateService>();
                     s.AddSingleton<IIlwService, IlwService>();
                 });
 
