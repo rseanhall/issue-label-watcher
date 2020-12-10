@@ -126,8 +126,8 @@ namespace IssueLabelWatcherWebJob
             var sb = new StringBuilder();
             int i = 1;
             JObject variables = new JObject();
-            var prefix = "query IssuesWithLabel($dryRun:Boolean!, $since:DateTime";
-            var since = timeFromNow.HasValue ? DateTime.UtcNow - timeFromNow : null;
+            var prefix = "query IssuesWithLabel($dryRun:Boolean!";
+            var since = timeFromNow.HasValue ? (DateTime.UtcNow - timeFromNow.Value).ToString("o") : null;
             var newVariableIndex = prefix.Length;
             sb.Append(prefix);
             sb.AppendLine(") {");
@@ -152,14 +152,13 @@ namespace IssueLabelWatcherWebJob
                 };
                 repoList.Add(repo);
 
-                AppendIndentedLine(sb, i++, string.Format("{0}: repository(owner:\"{1}\", name:\"{2}\") {{", repo.RepoAlias, targetRepo.Owner, targetRepo.Name));
-
                 if (repo.WatchPinned.Enabled)
                 {
                     sb.Insert(newVariableIndex, $", ${repo.WatchPinned.AfterVariableName}:String, ${repo.WatchPinned.IncludeVariableName}:Boolean!");
                     variables[repo.WatchPinned.AfterVariableName] = null;
                     variables[repo.WatchPinned.IncludeVariableName] = true;
 
+                    AppendIndentedLine(sb, i++, string.Format("{0}: repository(owner:\"{1}\", name:\"{2}\") {{", repo.RepoAlias, targetRepo.Owner, targetRepo.Name));
                     AppendIndentedLine(sb, i++, string.Format("pinnedIssues(first:100, after:${0}) @include(if:${1}) {{", repo.WatchPinned.AfterVariableName, repo.WatchPinned.IncludeVariableName));
                     AppendIndentedLine(sb, i++, "nodes {");
                     AppendIndentedLine(sb, i++, "issue {");
@@ -171,6 +170,7 @@ namespace IssueLabelWatcherWebJob
                     AppendIndentedLine(sb, i, "hasNextPage");
                     AppendIndentedLine(sb, --i, "}"); //pinnedIssues/pageInfo
                     AppendIndentedLine(sb, --i, "}"); //pinnedIssues
+                    AppendIndentedLine(sb, --i, "}"); //repository
                 }
 
                 foreach (var targetLabel in targetRepo.TargetLabels)
@@ -185,17 +185,11 @@ namespace IssueLabelWatcherWebJob
                     variables[label.AfterVariableName] = null;
                     variables[label.IncludeVariableName] = true;
 
-                    var issueFilter = $"{{ labels:[\"{targetLabel}\"], states: [OPEN, CLOSED], since: $since }}";
-                    AppendIndentedLine(sb, i++, string.Format("{0}: issues(filterBy:{1}, after:${2}, first:100, orderBy: {3}) @include(if:${4}) {{",
-                        label.Alias, issueFilter, label.AfterVariableName, "{ field:UPDATED_AT, direction:DESC }", label.IncludeVariableName));
-                    AppendIndentedLine(sb, i++, "nodes {");
-                    AppendIndentedLine(sb, i, "...issueFields");
-                    AppendIndentedLine(sb, --i, "}"); //issues/nodes
-                    AppendIndentedLine(sb, i++, "pageInfo {");
-                    AppendIndentedLine(sb, i, "endCursor");
-                    AppendIndentedLine(sb, i, "hasNextPage");
-                    AppendIndentedLine(sb, --i, "}"); //issues/pageInfo
-                    AppendIndentedLine(sb, --i, "}"); //issues
+                    var baseQuery = $"repo:\\\"{targetRepo.FullName}\\\" label:\\\"{targetLabel}\\\" updated:>{since} sort:updated-desc";
+                    AppendIndentedLine(sb, i++, string.Format("{0}: search(type:ISSUE, query:\"is:issue {1}\", after:${2}, first:100) @include(if:${3}) {{",
+                        label.Alias, baseQuery, label.AfterVariableName, label.IncludeVariableName));
+                    AppendIndentedLine(sb, i, "...searchFields");
+                    AppendIndentedLine(sb, --i, "}"); //search
 
                     if (label.WatchPullRequests)
                     {
@@ -204,26 +198,18 @@ namespace IssueLabelWatcherWebJob
                         variables[label.PRAfterVariableName] = null;
                         variables[label.PRIncludeVariableName] = true;
 
-                        var prFilter = $"labels:[\"{targetLabel}\"], states: [OPEN, CLOSED, MERGED]";
-                        AppendIndentedLine(sb, i++, string.Format("{0}: pullRequests({1}, after:${2}, first:100, orderBy: {3}) @include(if:${4}) {{",
-                            label.PRAlias, prFilter, label.PRAfterVariableName, "{ field:UPDATED_AT, direction:DESC }", label.PRIncludeVariableName));
-                        AppendIndentedLine(sb, i++, "nodes {");
-                        AppendIndentedLine(sb, i, "...prFields");
-                        AppendIndentedLine(sb, --i, "}"); //pullRequests/nodes
-                        AppendIndentedLine(sb, i++, "pageInfo {");
-                        AppendIndentedLine(sb, i, "endCursor");
-                        AppendIndentedLine(sb, i, "hasNextPage");
-                        AppendIndentedLine(sb, --i, "}"); //pullRequests/pageInfo
-                        AppendIndentedLine(sb, --i, "}"); //pullRequests
+                        AppendIndentedLine(sb, i++, string.Format("{0}: search(type:ISSUE, query:\"is:pr {1}\", after:${2}, first:100) @include(if:${3}) {{",
+                            label.PRAlias, baseQuery, label.PRAfterVariableName, label.PRIncludeVariableName));
+                        AppendIndentedLine(sb, i, "...searchFields");
+                        AppendIndentedLine(sb, --i, "}"); //search
                     }
                 }
-                AppendIndentedLine(sb, --i, "}"); //repository
             }
             sb.AppendLine("}"); //query
             sb.AppendLine();
             sb.AppendLine("fragment issueFields on Issue {");
             AppendIndentedLine(sb, i, "number");
-            AppendIndentedLine(sb, i, "state");
+            AppendIndentedLine(sb, i, "issueState: state");
             AppendIndentedLine(sb, i, "title");
             AppendIndentedLine(sb, i, "updatedAt");
             AppendIndentedLine(sb, i, "url");
@@ -236,7 +222,7 @@ namespace IssueLabelWatcherWebJob
             sb.AppendLine("}"); //fragment
             sb.AppendLine("fragment prFields on PullRequest {");
             AppendIndentedLine(sb, i, "number");
-            AppendIndentedLine(sb, i, "state");
+            AppendIndentedLine(sb, i, "pRState: state");
             AppendIndentedLine(sb, i, "title");
             AppendIndentedLine(sb, i, "updatedAt");
             AppendIndentedLine(sb, i, "url");
@@ -247,10 +233,23 @@ namespace IssueLabelWatcherWebJob
             AppendIndentedLine(sb, --i, "}"); //labels/nodes
             AppendIndentedLine(sb, --i, "}"); //labels
             sb.AppendLine("}"); //fragment
+            sb.AppendLine("fragment srFields on SearchResultItem {");
+            AppendIndentedLine(sb, i, "typeName: __typename");
+            AppendIndentedLine(sb, i, "...issueFields");
+            AppendIndentedLine(sb, i, "...prFields");
+            sb.AppendLine("}"); //fragment
+            sb.AppendLine("fragment searchFields on SearchResultItemConnection {");
+            AppendIndentedLine(sb, i++, "nodes {");
+            AppendIndentedLine(sb, i, "...srFields");
+            AppendIndentedLine(sb, --i, "}"); //nodes
+            AppendIndentedLine(sb, i++, "pageInfo {");
+            AppendIndentedLine(sb, i, "endCursor");
+            AppendIndentedLine(sb, i, "hasNextPage");
+            AppendIndentedLine(sb, --i, "}"); //pageInfo
+            sb.AppendLine("}"); //fragment
 
             var query = sb.ToString();
             variables["dryRun"] = true;
-            variables["since"] = since;
             var rateLimitRequest = await _graphqlGithubClient.SendQueryAsync<RateLimitGraphQLRequest>(new GraphQLRequest
             {
                 Query = query,
@@ -280,27 +279,25 @@ namespace IssueLabelWatcherWebJob
                 foreach (var repo in repoList)
                 {
                     var repoObject = recentIssueRequest.Data[repo.RepoAlias];
-                    if (repoObject == null)
+                    if (repoObject != null)
                     {
-                        continue;
-                    }
-
-                    var pinnedIssueResult = repoObject["pinnedIssues"]?.ToObject<GraphQLPinnedIssueResult>();
-                    if (pinnedIssueResult != null)
-                    {
-                        variables[repo.WatchPinned.AfterVariableName] = pinnedIssueResult.PageInfo.EndCursor;
-                        variables[repo.WatchPinned.IncludeVariableName] = pinnedIssueResult.PageInfo.HasNextPage;
-                        hasMorePages |= pinnedIssueResult.PageInfo.HasNextPage;
-
-                        foreach (var node in pinnedIssueResult.Nodes)
+                        var pinnedIssueResult = repoObject["pinnedIssues"]?.ToObject<GraphQLPinnedIssueResult>();
+                        if (pinnedIssueResult != null)
                         {
-                            ProcessIssue(node.Issue, repo, "Pinned");
+                            variables[repo.WatchPinned.AfterVariableName] = pinnedIssueResult.PageInfo.EndCursor;
+                            variables[repo.WatchPinned.IncludeVariableName] = pinnedIssueResult.PageInfo.HasNextPage;
+                            hasMorePages |= pinnedIssueResult.PageInfo.HasNextPage;
+
+                            foreach (var node in pinnedIssueResult.Nodes)
+                            {
+                                ProcessIssue(node.Issue, repo, "Pinned");
+                            }
                         }
                     }
 
                     foreach (var labelAlias in repo.Labels)
                     {
-                        var labelResult = repoObject[labelAlias.Alias]?.ToObject<GraphQLLabelResult>();
+                        var labelResult = recentIssueRequest.Data[labelAlias.Alias]?.ToObject<GraphQLLabelResult>();
                         if (labelResult != null)
                         {
                             variables[labelAlias.AfterVariableName] = labelResult.PageInfo.EndCursor;
@@ -313,28 +310,17 @@ namespace IssueLabelWatcherWebJob
                             }
                         }
 
-                        var prResult = repoObject[labelAlias.PRAlias]?.ToObject<GraphQLLabelResult>();
+                        var prResult = recentIssueRequest.Data[labelAlias.PRAlias]?.ToObject<GraphQLLabelResult>();
                         if (prResult != null)
                         {
                             variables[labelAlias.PRAfterVariableName] = prResult.PageInfo.EndCursor;
-                            var prHasMorePages = prResult.PageInfo.HasNextPage;
+                            variables[labelAlias.PRIncludeVariableName] = prResult.PageInfo.HasNextPage;
+                            hasMorePages |= prResult.PageInfo.HasNextPage;
 
                             foreach (var issue in prResult.Nodes)
                             {
-                                // Workaround the lack of filtering for pull requests.
-                                if (!since.HasValue || issue.UpdatedAt > since)
-                                {
-                                    ProcessIssue(issue, repo, "PR");
-                                }
-                                else
-                                {
-                                    prHasMorePages = false;
-                                    break;
-                                }
+                                ProcessIssue(issue, repo, "PR");
                             }
-
-                            variables[labelAlias.PRIncludeVariableName] = prHasMorePages;
-                            hasMorePages |= prHasMorePages;
                         }
                     }
                 }
@@ -344,7 +330,7 @@ namespace IssueLabelWatcherWebJob
             return results;
         }
 
-        private static void ProcessIssue(GraphQLIssue issue, GithubIssueListByRepo repo, string issueType = "Issue")
+        private static void ProcessIssue(GraphQLIssueOrPullRequest issue, GithubIssueListByRepo repo, string issueType = "Issue")
         {
             var newIssue = new GithubIssue
             {
@@ -353,7 +339,7 @@ namespace IssueLabelWatcherWebJob
                 Labels = issue.Labels.Nodes.Select(n => n.Name).ToArray(),
                 Number = issue.Number,
                 Repo = repo.Repo,
-                Status = issue.State,
+                Status = issue.TypeName == "PullRequest" ? issue.PRState : issue.IssueState,
                 Title = issue.Title,
                 UpdatedAt = issue.UpdatedAt,
                 Url = issue.Url,
@@ -389,7 +375,7 @@ namespace IssueLabelWatcherWebJob
 
         public class GraphQLLabelResult
         {
-            public GraphQLIssue[] Nodes { get; set; }
+            public GraphQLIssueOrPullRequest[] Nodes { get; set; }
             public GraphQLPageInfo PageInfo { get; set; }
         }
 
@@ -399,12 +385,14 @@ namespace IssueLabelWatcherWebJob
             public bool HasNextPage { get; set; }
         }
 
-        public class GraphQLIssue
+        public class GraphQLIssueOrPullRequest
         {
+            public string IssueState { get; set; }
             public GraphQLIssueLabelNodes Labels { get; set; }
             public string Number { get; set; }
-            public string State { get; set; }
+            public string PRState { get; set; }
             public string Title { get; set; }
+            public string TypeName { get; set; }
             public DateTime UpdatedAt { get; set; }
             public string Url { get; set; }
             public string ViewerSubscription { get; set; }
@@ -428,7 +416,7 @@ namespace IssueLabelWatcherWebJob
 
         public class GraphQLPinnedIssue
         {
-            public GraphQLIssue Issue { get; set; }
+            public GraphQLIssueOrPullRequest Issue { get; set; }
         }
     }
 }
