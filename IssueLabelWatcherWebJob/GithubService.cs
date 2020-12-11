@@ -206,7 +206,7 @@ namespace IssueLabelWatcherWebJob
                     variables[label.AfterVariableName] = null;
                     variables[label.IncludeVariableName] = true;
 
-                    var baseQuery = $"repo:\\\"{targetRepo.FullName}\\\" label:\\\"{targetLabel}\\\" updated:>{since} sort:updated-desc";
+                    var baseQuery = string.Format("repo:\\\"{0}\\\" label:\\\"{1}\\\"{2} sort:updated-desc", targetRepo.FullName, targetLabel, since == null ? "" : $" updated:>{since}");
                     AppendIndentedLine(sb, i++, string.Format("{0}: search(type:ISSUE, query:\"is:issue {1}\", after:${2}, first:100) @include(if:${3}) {{",
                         label.Alias, baseQuery, label.AfterVariableName, label.IncludeVariableName));
                     AppendIndentedLine(sb, i, "...searchFields");
