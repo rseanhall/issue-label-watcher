@@ -1,6 +1,7 @@
 ﻿using GraphQL;
 using GraphQL.Client.Http;
 using GraphQL.Client.Serializer.Newtonsoft;
+using Microsoft.Extensions.Logging;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
@@ -102,11 +103,13 @@ namespace IssueLabelWatcherWebJob
     public class GithubService : IGithubService
     {
         private readonly IIlwConfiguration _configuration;
+        private readonly ILogger _logger;
         private readonly GraphQLHttpClient _graphqlGithubClient;
 
-        public GithubService(IIlwConfiguration configuration)
+        public GithubService(IIlwConfiguration configuration, ILogger<GithubService> logger)
         {
             _configuration = configuration;
+            _logger = logger;
 
             _graphqlGithubClient = new GraphQLHttpClient("https://api.github.com/graphql", new NewtonsoftJsonSerializer());
             _graphqlGithubClient.HttpClient.DefaultRequestHeaders.Add("Authorization", $"bearer {_configuration.GithubPersonalAccessToken}");
@@ -116,7 +119,25 @@ namespace IssueLabelWatcherWebJob
 
         private bool CanMakeGraphQLRequests(RateLimit rateLimit)
         {
-            return rateLimit.Cost < rateLimit.Remaining;
+            var result = rateLimit.Cost < rateLimit.Remaining;
+
+            if (!result)
+            {
+                _logger.LogWarning("Rate limit reached {RateLimit}", JObject.FromObject(rateLimit).ToString());
+            }
+
+            return result;
+        }
+
+        private bool CheckForErrors(IGraphQLResponse response)
+        {
+            if (response.Errors == null || response.Errors.Length == 0)
+            {
+                return false;
+            }
+
+            _logger.LogError(string.Join(Environment.NewLine, response.Errors.Select(e => JObject.FromObject(e).ToString())));
+            return true;
         }
 
         public async Task<IGithubIssuesByRepo[]> GetRecentIssuesWithLabel(TimeSpan? timeFromNow)
@@ -249,12 +270,19 @@ namespace IssueLabelWatcherWebJob
             sb.AppendLine("}"); //fragment
 
             var query = sb.ToString();
+            _logger.LogDebug(query);
+
             variables["dryRun"] = true;
             var rateLimitRequest = await _graphqlGithubClient.SendQueryAsync<RateLimitGraphQLRequest>(new GraphQLRequest
             {
                 Query = query,
                 Variables = variables,
             });
+
+            if (this.CheckForErrors(rateLimitRequest))
+            {
+                return null;
+            }
 
             var rateLimit = rateLimitRequest.Data.RateLimit;
             variables["dryRun"] = false;
@@ -266,16 +294,25 @@ namespace IssueLabelWatcherWebJob
 
                 if (!this.CanMakeGraphQLRequests(rateLimit))
                 {
-                    return null;
+                    break;
                 }
 
+                _logger.LogDebug(variables.ToString());
                 var recentIssueRequest = await _graphqlGithubClient.SendQueryAsync<JObject>(new GraphQLRequest
                 {
                     Query = query,
                     Variables = variables,
                 });
 
-                rateLimit = recentIssueRequest.Data["rateLimit"].ToObject<RateLimit>();
+                if (this.CheckForErrors(recentIssueRequest))
+                {
+                    break;
+                }
+
+                var rateLimitObject = recentIssueRequest.Data["rateLimit"];
+                rateLimit = rateLimitObject.ToObject<RateLimit>();
+                _logger.LogDebug("Rate limit {RateLimit}", rateLimitObject.ToString());
+
                 foreach (var repo in repoList)
                 {
                     var repoObject = recentIssueRequest.Data[repo.RepoAlias];

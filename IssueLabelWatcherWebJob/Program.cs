@@ -14,6 +14,9 @@ namespace IssueLabelWatcherWebJob
         public static async Task Main()
         {
             var builder = new HostBuilder()
+#if DEBUG
+                .UseEnvironment("development")
+#endif
                 .ConfigureWebJobs(b =>
                 {
                     b.AddAzureStorageCoreServices();
@@ -28,6 +31,11 @@ namespace IssueLabelWatcherWebJob
                     if (!string.IsNullOrEmpty(instrumentationKey))
                     {
                         b.AddApplicationInsightsWebJobs(o => o.InstrumentationKey = instrumentationKey);
+                    }
+
+                    if (context.HostingEnvironment.IsDevelopment() || !string.IsNullOrEmpty(context.Configuration["ilw:DebugLogging"]))
+                    {
+                        b.AddFilter(nameof(IssueLabelWatcherWebJob), LogLevel.Debug);
                     }
                 })
                 .ConfigureServices(s =>
