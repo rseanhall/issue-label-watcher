@@ -19,6 +19,7 @@ namespace IssueLabelWatcherWebJob
 
     public interface IIlwConfiguration
     {
+        uint ChunkSize { get; }
         bool EnableFindAllLabelledIssues { get; }
         string FindAllLabelledIssuesTiming { get; }
         string FindRecentLabelledIssuesTiming { get; }
@@ -46,6 +47,7 @@ namespace IssueLabelWatcherWebJob
 
     public class IlwConfiguration : IIlwConfiguration
     {
+        public const string ChunkSizeKey = "ilw:ChunkSize";
         public const string EnableFindAllLabelledIssuesKey = "ilw:EnableFindAllLabelledIssues";
         public const string FindAllLabelledIssuesTimingKey = "ilw:FindAllLabelledIssuesTiming";
         public const string FindRecentLabelledIssuesTimingKey = "ilw:FindRecentLabelledIssuesTiming";
@@ -69,6 +71,7 @@ namespace IssueLabelWatcherWebJob
         {
             _logger = logger;
 
+            this.ChunkSize = configuration.GetValue<uint>(ChunkSizeKey, 10);
             this.EnableFindAllLabelledIssues = configuration.GetValue<bool?>(EnableFindAllLabelledIssuesKey) == true;
             this.FindAllLabelledIssuesTiming = configuration.GetValue(FindAllLabelledIssuesTimingKey, "0 0 0 * * *");
             this.FindRecentLabelledIssuesTiming = configuration.GetValue(FindRecentLabelledIssuesTimingKey, "00:15:00");
@@ -129,6 +132,7 @@ namespace IssueLabelWatcherWebJob
             _logger.LogInformation(sb.ToString());
         }
 
+        public uint ChunkSize { get; }
         public bool EnableFindAllLabelledIssues { get; }
         public string FindAllLabelledIssuesTiming { get; }
         public string FindRecentLabelledIssuesTiming { get; }

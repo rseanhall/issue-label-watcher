@@ -6,8 +6,10 @@ using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace IssueLabelWatcherWebJob
@@ -147,8 +149,9 @@ namespace IssueLabelWatcherWebJob
             var sb = new StringBuilder();
             int i = 1;
             JObject variables = new JObject();
-            var prefix = "query IssuesWithLabel($dryRun:Boolean!";
+            var prefix = "query IssuesWithLabel($dryRun:Boolean!, $chunkSize:Int!";
             var since = timeFromNow.HasValue ? (DateTime.UtcNow - timeFromNow.Value).ToString("o") : null;
+            var chunkSize = Math.Min(_configuration.ChunkSize, 100u);
             var newVariableIndex = prefix.Length;
             sb.Append(prefix);
             sb.AppendLine(") {");
@@ -180,7 +183,7 @@ namespace IssueLabelWatcherWebJob
                     variables[repo.WatchPinned.IncludeVariableName] = true;
 
                     AppendIndentedLine(sb, i++, string.Format("{0}: repository(owner:\"{1}\", name:\"{2}\") {{", repo.RepoAlias, targetRepo.Owner, targetRepo.Name));
-                    AppendIndentedLine(sb, i++, string.Format("pinnedIssues(first:100, after:${0}) @include(if:${1}) {{", repo.WatchPinned.AfterVariableName, repo.WatchPinned.IncludeVariableName));
+                    AppendIndentedLine(sb, i++, string.Format("pinnedIssues(first:$chunkSize, after:${0}) @include(if:${1}) {{", repo.WatchPinned.AfterVariableName, repo.WatchPinned.IncludeVariableName));
                     AppendIndentedLine(sb, i++, "nodes {");
                     AppendIndentedLine(sb, i++, "issue {");
                     AppendIndentedLine(sb, i, "...issueFields");
@@ -207,7 +210,7 @@ namespace IssueLabelWatcherWebJob
                     variables[label.IncludeVariableName] = true;
 
                     var baseQuery = string.Format("repo:\\\"{0}\\\" label:\\\"{1}\\\"{2} sort:updated-desc", targetRepo.FullName, targetLabel, since == null ? "" : $" updated:>{since}");
-                    AppendIndentedLine(sb, i++, string.Format("{0}: search(type:ISSUE, query:\"is:issue {1}\", after:${2}, first:100) @include(if:${3}) {{",
+                    AppendIndentedLine(sb, i++, string.Format("{0}: search(type:ISSUE, query:\"is:issue {1}\", after:${2}, first:$chunkSize) @include(if:${3}) {{",
                         label.Alias, baseQuery, label.AfterVariableName, label.IncludeVariableName));
                     AppendIndentedLine(sb, i, "...searchFields");
                     AppendIndentedLine(sb, --i, "}"); //search
@@ -219,7 +222,7 @@ namespace IssueLabelWatcherWebJob
                         variables[label.PRAfterVariableName] = null;
                         variables[label.PRIncludeVariableName] = true;
 
-                        AppendIndentedLine(sb, i++, string.Format("{0}: search(type:ISSUE, query:\"is:pr {1}\", after:${2}, first:100) @include(if:${3}) {{",
+                        AppendIndentedLine(sb, i++, string.Format("{0}: search(type:ISSUE, query:\"is:pr {1}\", after:${2}, first:$chunkSize) @include(if:${3}) {{",
                             label.PRAlias, baseQuery, label.PRAfterVariableName, label.PRIncludeVariableName));
                         AppendIndentedLine(sb, i, "...searchFields");
                         AppendIndentedLine(sb, --i, "}"); //search
@@ -273,6 +276,7 @@ namespace IssueLabelWatcherWebJob
             _logger.LogDebug(query);
 
             variables["dryRun"] = true;
+            variables["chunkSize"] = chunkSize;
             var rateLimitRequest = await _graphqlGithubClient.SendQueryAsync<RateLimitGraphQLRequest>(new GraphQLRequest
             {
                 Query = query,
@@ -298,11 +302,24 @@ namespace IssueLabelWatcherWebJob
                 }
 
                 _logger.LogDebug(variables.ToString());
-                var recentIssueRequest = await _graphqlGithubClient.SendQueryAsync<JObject>(new GraphQLRequest
+                GraphQLResponse<JObject> recentIssueRequest;
+                try
                 {
-                    Query = query,
-                    Variables = variables,
-                });
+                    recentIssueRequest = await _graphqlGithubClient.SendQueryAsync<JObject>(new GraphQLRequest
+                    {
+                        Query = query,
+                        Variables = variables,
+                    });
+                }
+                catch (GraphQLHttpRequestException e) when (e.StatusCode == HttpStatusCode.BadGateway && chunkSize > 5)
+                {
+                    chunkSize -= 5;
+                    variables["chunkSize"] = chunkSize;
+                    hasMorePages = true;
+                    _logger.LogWarning("Query seems to have timed out, trying with smaller chunkSize ({ChunkSize})...", chunkSize);
+                    Thread.Sleep(10000);
+                    continue;
+                }
 
                 if (this.CheckForErrors(recentIssueRequest))
                 {
