@@ -86,8 +86,9 @@ namespace IssueLabelWatcherWebJob
             var result = _inner.GetNextOccurrence(now);
             if (_random != null)
             {
-                var diff = (int)Math.Min(int.MaxValue, (result - now).Ticks / 2);
-                result = result.AddTicks(_random.Next(diff));
+                var range = (result - now).Ticks / 2;
+                var delay = (long)(_random.NextDouble() * range);
+                result = result.AddTicks(delay);
             }
 
             return result;
