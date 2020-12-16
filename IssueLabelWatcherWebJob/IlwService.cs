@@ -11,7 +11,7 @@ namespace IssueLabelWatcherWebJob
     public interface IIlwService
     {
         Task FindAndNotifyAllLabelledIssues(IIlwState state);
-        Task FindAndNotifyRecentLabelledIssues(IIlwState state, TimeSpan timeFromNow);
+        Task FindAndNotifyRecentLabelledIssues(IIlwState state);
     }
 
     public class IlwService : IIlwService
@@ -32,9 +32,9 @@ namespace IssueLabelWatcherWebJob
             return this.FindAndNotifyLabelledIssues(state, null);
         }
 
-        public Task FindAndNotifyRecentLabelledIssues(IIlwState state, TimeSpan timeFromNow)
+        public Task FindAndNotifyRecentLabelledIssues(IIlwState state)
         {
-            return this.FindAndNotifyLabelledIssues(state, timeFromNow);
+            return this.FindAndNotifyLabelledIssues(state, TimeSpan.FromDays(1));
         }
 
         private async Task FindAndNotifyLabelledIssues(IIlwState state, TimeSpan? timeFromNow)
