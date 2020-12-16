@@ -6,6 +6,7 @@ namespace IssueLabelWatcherWebJob
 {
     public class FindRecentLabelledIssuesTiming : TimerSchedule
     {
+        private bool _firstOccurence = true; 
         private readonly TimerSchedule _inner;
         private readonly Random _random;
 
@@ -36,6 +37,13 @@ namespace IssueLabelWatcherWebJob
 
         public override DateTime GetNextOccurrence(DateTime now)
         {
+            // Want to run immediately, but only after all initialization has happened.
+            if (_firstOccurence)
+            {
+                _firstOccurence = false;
+                return now;
+            }
+
             var result = _inner.GetNextOccurrence(now);
             if (_random != null)
             {

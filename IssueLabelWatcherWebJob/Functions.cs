@@ -16,7 +16,7 @@ namespace IssueLabelWatcherWebJob
         }
 
         [Singleton(SingletonScopeName, SingletonScope.Host)]
-        public async Task FindRecentLabelledIssues([TimerTrigger(typeof(FindRecentLabelledIssuesTiming), RunOnStartup = true, UseMonitor = false)] TimerInfo timerInfo)
+        public async Task FindRecentLabelledIssues([TimerTrigger(typeof(FindRecentLabelledIssuesTiming), UseMonitor = false)] TimerInfo timerInfo)
         {
             var state = await _ilwStateService.Load();
             await _ilwService.FindAndNotifyRecentLabelledIssues(state);
