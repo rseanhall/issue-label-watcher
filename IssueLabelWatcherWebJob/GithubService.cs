@@ -74,6 +74,7 @@ namespace IssueLabelWatcherWebJob
             this.Alias = $"issue_{alias}";
             this.AfterVariableName = $"after_{repoAlias}_{this.Alias}";
             this.IncludeVariableName = $"include_{repoAlias}_{this.Alias}";
+            this.Name = name;
             this.PRAlias = $"pr_{alias}";
             this.PRAfterVariableName = $"after_{repoAlias}_{this.PRAlias}";
             this.PRIncludeVariableName = $"include_{repoAlias}_{this.PRAlias}";
@@ -82,6 +83,7 @@ namespace IssueLabelWatcherWebJob
         public string Alias { get; set; }
         public string AfterVariableName { get; set; }
         public string IncludeVariableName { get; set; }
+        public string Name { get; set; }
         public string PRAlias { get; set; }
         public string PRAfterVariableName { get; set; }
         public string PRIncludeVariableName { get; set; }
@@ -100,6 +102,20 @@ namespace IssueLabelWatcherWebJob
         public bool Enabled { get; set; }
         public string AfterVariableName { get; set; }
         public string IncludeVariableName { get; set; }
+    }
+
+    public class GithubLabelList
+    {
+        public GithubLabelList(string repoAlias)
+        {
+            this.AfterVariableName = $"labels_after_{repoAlias}";
+            this.IncludeVariableName = $"labels_include_{repoAlias}";
+            this.LabelByName = new Dictionary<string, List<string>>(StringComparer.InvariantCultureIgnoreCase);
+        }
+
+        public string AfterVariableName { get; set; }
+        public string IncludeVariableName { get; set; }
+        public Dictionary<string, List<string>> LabelByName { get; set; }
     }
 
     public class GithubService : IGithubService
@@ -142,27 +158,21 @@ namespace IssueLabelWatcherWebJob
             return true;
         }
 
-        public async Task<IGithubIssuesByRepo[]> GetRecentIssuesWithLabel(TimeSpan? timeFromNow)
+        private async Task<List<GithubIssueListByRepo>> PrepareRepoList()
         {
             var repoList = new List<GithubIssueListByRepo>();
+            var labelListByRepo = new Dictionary<string, GithubLabelList>();
 
             var sb = new StringBuilder();
             int i = 1;
             JObject variables = new JObject();
-            var prefix = "query IssuesWithLabel($dryRun:Boolean!, $since:DateTime, $chunkSize:Int!";
-            var since = timeFromNow.HasValue ? DateTime.UtcNow - timeFromNow : null;
-            var chunkSize = Math.Min(_configuration.ChunkSize, 100u);
+            var prefix = "query IssuesWithLabel($dryRun:Boolean!, $chunkSize:Int!";
+            var chunkSize = 100u;
             var newVariableIndex = prefix.Length;
             sb.Append(prefix);
             sb.AppendLine(") {");
-            AppendIndentedLine(sb, i++, "rateLimit(dryRun: $dryRun) {");
-            AppendIndentedLine(sb, i, "cost");
-            AppendIndentedLine(sb, i, "limit");
-            AppendIndentedLine(sb, i, "nodeCount");
-            AppendIndentedLine(sb, i, "remaining");
-            AppendIndentedLine(sb, i, "resetAt");
-            AppendIndentedLine(sb, i, "used");
-            AppendIndentedLine(sb, --i, "}"); //rateLimit
+            RateLimit.AppendQuery(sb, i);
+
             foreach (var targetRepo in _configuration.Repos)
             {
                 var repoAlias = GetGraphQLAlias($"{targetRepo.Owner}_{targetRepo.Name}");
@@ -175,6 +185,184 @@ namespace IssueLabelWatcherWebJob
                     WatchPinned = new GithubIssueListWatchPinned(targetRepo.WatchPinnedIssues, repoAlias),
                 };
                 repoList.Add(repo);
+
+                var labelList = new GithubLabelList(repoAlias);
+                labelListByRepo.Add(targetRepo.FullName, labelList);
+                foreach (var targetLabel in targetRepo.TargetLabels)
+                {
+                    labelList.LabelByName.Add(targetLabel, new List<string>());
+                }
+
+                sb.Insert(newVariableIndex, $", ${labelList.AfterVariableName}:String, ${labelList.IncludeVariableName}:Boolean!");
+                variables[labelList.AfterVariableName] = null;
+                variables[labelList.IncludeVariableName] = true;
+
+                AppendIndentedLine(sb, i++, string.Format("{0}: repository(owner:\"{1}\", name:\"{2}\") @include(if:${3}) {{",
+                                                          repo.RepoAlias, targetRepo.Owner, targetRepo.Name, labelList.IncludeVariableName));
+                AppendIndentedLine(sb, i++, string.Format("labels(first:$chunkSize, after:${0}) {{", labelList.AfterVariableName));
+                AppendIndentedLine(sb, i, "...labelConnectionFields");
+                AppendIndentedLine(sb, --i, "}"); //labels
+                AppendIndentedLine(sb, --i, "}"); //repository
+            }
+
+            sb.AppendLine("}"); //query
+            sb.AppendLine();
+            sb.AppendLine("fragment labelFields on Label {");
+            AppendIndentedLine(sb, i, "name");
+            sb.AppendLine("}"); //fragment
+            sb.AppendLine("fragment labelConnectionFields on LabelConnection {");
+            AppendIndentedLine(sb, i++, "nodes {");
+            AppendIndentedLine(sb, i, "...labelFields");
+            AppendIndentedLine(sb, --i, "}"); //nodes
+            AppendIndentedLine(sb, i++, "pageInfo {");
+            AppendIndentedLine(sb, i, "endCursor");
+            AppendIndentedLine(sb, i, "hasNextPage");
+            AppendIndentedLine(sb, --i, "}"); //pageInfo
+            sb.AppendLine("}"); //fragment
+
+            var query = sb.ToString();
+            _logger.LogDebug(query);
+
+            variables["dryRun"] = true;
+            variables["chunkSize"] = chunkSize;
+            var rateLimitRequest = await _graphqlGithubClient.SendQueryAsync<RateLimitGraphQLRequest>(new GraphQLRequest
+            {
+                Query = query,
+                Variables = variables,
+            });
+
+            if (this.CheckForErrors(rateLimitRequest))
+            {
+                return null;
+            }
+
+            var rateLimit = rateLimitRequest.Data.RateLimit;
+            variables["dryRun"] = false;
+
+            var hasMorePages = true;
+            while (hasMorePages)
+            {
+                hasMorePages = false;
+
+                if (!this.CanMakeGraphQLRequests(rateLimit))
+                {
+                    break;
+                }
+
+                _logger.LogDebug(variables.ToString());
+                GraphQLResponse<JObject> labelsRequest;
+                try
+                {
+                    labelsRequest = await _graphqlGithubClient.SendQueryAsync<JObject>(new GraphQLRequest
+                    {
+                        Query = query,
+                        Variables = variables,
+                    });
+                }
+                catch (GraphQLHttpRequestException e) when (chunkSize > 5 &&
+                    (e.StatusCode == HttpStatusCode.BadGateway || e.StatusCode == HttpStatusCode.GatewayTimeout))
+                {
+                    chunkSize -= 5;
+                    variables["chunkSize"] = chunkSize;
+                    hasMorePages = true;
+                    _logger.LogWarning("Labels query seems to have timed out ({StatusCode}), trying with smaller chunkSize ({ChunkSize})...", e.StatusCode, chunkSize);
+                    Thread.Sleep(10000);
+                    continue;
+                }
+
+                if (this.CheckForErrors(labelsRequest))
+                {
+                    break;
+                }
+
+                var rateLimitObject = labelsRequest.Data["rateLimit"];
+                rateLimit = rateLimitObject.ToObject<RateLimit>();
+                _logger.LogDebug("Rate limit {RateLimit}", rateLimitObject.ToString());
+
+                foreach (var repo in repoList)
+                {
+                    var repoObject = labelsRequest.Data[repo.RepoAlias];
+                    if (repoObject == null)
+                    {
+                        continue;
+                    }
+
+                    var labelList = labelListByRepo[repo.Repo.FullName];
+
+                    var labelListResult = repoObject["labels"]?.ToObject<GraphQLLabelListResult>();
+                    if (labelListResult != null)
+                    {
+                        variables[labelList.AfterVariableName] = labelListResult.PageInfo.EndCursor;
+                        variables[labelList.IncludeVariableName] = labelListResult.PageInfo.HasNextPage;
+                        hasMorePages |= labelListResult.PageInfo.HasNextPage;
+
+                        foreach (var node in labelListResult.Nodes)
+                        {
+                            if (labelList.LabelByName.TryGetValue(node.Name, out var labels))
+                            {
+                                labels.Add(node.Name);
+                            }
+                        }
+                    }
+                }
+            }
+
+            foreach (var repo in repoList)
+            {
+                var labelList = labelListByRepo[repo.Repo.FullName];
+
+                foreach (var targetLabel in repo.Repo.TargetLabels)
+                {
+                    var labels = labelList.LabelByName[targetLabel];
+
+                    if (labels.Count == 0)
+                    {
+                        _logger.LogError("Label '{LabelName}' in repo '{Repo}' does not exist.", targetLabel, repo.Repo.FullName);
+                        continue;
+                    }
+
+                    // Does GitHub even allow labels that only differ by case?
+                    var actualLabelName = labels.FirstOrDefault(n => n == targetLabel);
+                    if (actualLabelName == null)
+                    {
+                        actualLabelName = labels[0];
+                        _logger.LogWarning("Label '{LabelName}' in repo '{Repo}' is wrong case, using '{NewLabelName}' ('{NewLabelChoices}')",
+                                           targetLabel, repo.Repo.FullName, actualLabelName, string.Join("','", labels));
+                    }
+
+                    var label = new GithubIssueListLabel(actualLabelName, repo.RepoAlias)
+                    {
+                        WatchPullRequests = repo.Repo.WatchPullRequests,
+                    };
+                    repo.Labels.Add(label);
+                }
+            }
+
+            return repoList;
+        }
+
+        public async Task<IGithubIssuesByRepo[]> GetRecentIssuesWithLabel(TimeSpan? timeFromNow)
+        {
+            var repoList = await this.PrepareRepoList();
+            if (repoList == null)
+            {
+                return null;
+            }
+
+            var sb = new StringBuilder();
+            int i = 1;
+            JObject variables = new JObject();
+            var prefix = "query IssuesWithLabel($dryRun:Boolean!, $since:DateTime, $chunkSize:Int!";
+            var since = timeFromNow.HasValue ? DateTime.UtcNow - timeFromNow : null;
+            var chunkSize = Math.Min(_configuration.ChunkSize, 100u);
+            var newVariableIndex = prefix.Length;
+            sb.Append(prefix);
+            sb.AppendLine(") {");
+            RateLimit.AppendQuery(sb, i);
+
+            foreach (var repo in repoList)
+            {
+                var targetRepo = repo.Repo;
 
                 AppendIndentedLine(sb, i++, string.Format("{0}: repository(owner:\"{1}\", name:\"{2}\") {{", repo.RepoAlias, targetRepo.Owner, targetRepo.Name));
 
@@ -189,19 +377,13 @@ namespace IssueLabelWatcherWebJob
                     AppendIndentedLine(sb, --i, "}"); //pinnedIssues
                 }
 
-                foreach (var targetLabel in targetRepo.TargetLabels)
+                foreach (var label in repo.Labels)
                 {
-                    var label = new GithubIssueListLabel(targetLabel, repo.RepoAlias)
-                    {
-                        WatchPullRequests = targetRepo.WatchPullRequests,
-                    };
-                    repo.Labels.Add(label);
-
                     sb.Insert(newVariableIndex, $", ${label.AfterVariableName}:String, ${label.IncludeVariableName}:Boolean!");
                     variables[label.AfterVariableName] = null;
                     variables[label.IncludeVariableName] = true;
 
-                    var issueFilter = $"{{ labels:[\"{targetLabel}\"], states: [OPEN, CLOSED], since: $since }}";
+                    var issueFilter = $"{{ labels:[\"{label.Name}\"], states: [OPEN, CLOSED], since: $since }}";
                     AppendIndentedLine(sb, i++, string.Format("{0}: issues(filterBy:{1}, after:${2}, first:$chunkSize, orderBy: {3}) @include(if:${4}) {{",
                         label.Alias, issueFilter, label.AfterVariableName, "{ field:UPDATED_AT, direction:DESC }", label.IncludeVariableName));
                     AppendIndentedLine(sb, i, "...issueConnectionFields");
@@ -214,7 +396,7 @@ namespace IssueLabelWatcherWebJob
                         variables[label.PRAfterVariableName] = null;
                         variables[label.PRIncludeVariableName] = true;
 
-                        var prFilter = $"labels:[\"{targetLabel}\"], states: [OPEN, CLOSED, MERGED]";
+                        var prFilter = $"labels:[\"{label.Name}\"], states: [OPEN, CLOSED, MERGED]";
                         AppendIndentedLine(sb, i++, string.Format("{0}: pullRequests({1}, after:${2}, first:$chunkSize, orderBy: {3}) @include(if:${4}) {{",
                             label.PRAlias, prFilter, label.PRAfterVariableName, "{ field:UPDATED_AT, direction:DESC }", label.PRIncludeVariableName));
                         AppendIndentedLine(sb, i, "...prConnectionFields");
@@ -324,12 +506,13 @@ namespace IssueLabelWatcherWebJob
                         Variables = variables,
                     });
                 }
-                catch (GraphQLHttpRequestException e) when (e.StatusCode == HttpStatusCode.BadGateway && chunkSize > 5)
+                catch (GraphQLHttpRequestException e) when (chunkSize > 5 &&
+                    (e.StatusCode == HttpStatusCode.BadGateway || e.StatusCode == HttpStatusCode.GatewayTimeout))
                 {
                     chunkSize -= 5;
                     variables["chunkSize"] = chunkSize;
                     hasMorePages = true;
-                    _logger.LogWarning("Query seems to have timed out, trying with smaller chunkSize ({ChunkSize})...", chunkSize);
+                    _logger.LogWarning("Issues query seems to have timed out ({StatusCode}), trying with smaller chunkSize ({ChunkSize})...", e.StatusCode, chunkSize);
                     Thread.Sleep(10000);
                     continue;
                 }
@@ -451,6 +634,18 @@ namespace IssueLabelWatcherWebJob
             public int Remaining { get; set; }
             public string ResetAt { get; set; }
             public int Used { get; set; }
+
+            public static void AppendQuery(StringBuilder sb, int i)
+            {
+                AppendIndentedLine(sb, i++, "rateLimit(dryRun: $dryRun) {");
+                AppendIndentedLine(sb, i, "cost");
+                AppendIndentedLine(sb, i, "limit");
+                AppendIndentedLine(sb, i, "nodeCount");
+                AppendIndentedLine(sb, i, "remaining");
+                AppendIndentedLine(sb, i, "resetAt");
+                AppendIndentedLine(sb, i, "used");
+                AppendIndentedLine(sb, --i, "}"); //rateLimit
+            }
         }
 
         public class GraphQLLabelResult
@@ -486,6 +681,12 @@ namespace IssueLabelWatcherWebJob
         public class GraphQLIssueLabel
         {
             public string Name { get; set; }
+        }
+
+        public class GraphQLLabelListResult
+        {
+            public GraphQLIssueLabel[] Nodes { get; set; }
+            public GraphQLPageInfo PageInfo { get; set; }
         }
 
         public class GraphQLPinnedIssueResult
