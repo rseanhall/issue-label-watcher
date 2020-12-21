@@ -24,6 +24,7 @@ namespace IssueLabelWatcherWebJob
         string FindAllLabelledIssuesTiming { get; }
         string FindRecentLabelledIssuesTiming { get; }
         string GithubPersonalAccessToken { get; }
+        uint LabelChunkSize { get; }
         bool RandomlyDelayFindRecentLabelledIssues { get; }
         ITargetRepo[] Repos { get; }
         string SmtpServer { get; }
@@ -52,6 +53,7 @@ namespace IssueLabelWatcherWebJob
         public const string FindAllLabelledIssuesTimingKey = "ilw:FindAllLabelledIssuesTiming";
         public const string FindRecentLabelledIssuesTimingKey = "ilw:FindRecentLabelledIssuesTiming";
         public const string GithubPersonalAccessTokenKey = "ilw:GithubPersonalAccessToken";
+        public const string LabelChunkSizeKey = "ilw:LabelChunkSize";
         public const string RandomlyDelayFindRecentLabelledIssuesKey = "ilw:RandomlyDelayFindRecentLabelledIssues";
         public const string ReposKey = "ilw:Repos";
         public const string RepoLabelsKeyFormat = "ilw:Repo:{0}:Labels";
@@ -76,6 +78,7 @@ namespace IssueLabelWatcherWebJob
             this.FindAllLabelledIssuesTiming = configuration.GetValue(FindAllLabelledIssuesTimingKey, "0 0 0 * * *");
             this.FindRecentLabelledIssuesTiming = configuration.GetValue(FindRecentLabelledIssuesTimingKey, "00:15:00");
             this.GithubPersonalAccessToken = configuration.GetValue<string>(GithubPersonalAccessTokenKey);
+            this.LabelChunkSize = configuration.GetValue<uint>(LabelChunkSizeKey, 10);
             this.RandomlyDelayFindRecentLabelledIssues = configuration.GetValue<bool?>(RandomlyDelayFindRecentLabelledIssuesKey) == true;
             this.SmtpServer = configuration.GetValue<string>(SmtpServerKey);
             this.SmtpPort = configuration.GetValue<int?>(SmtpPortKey);
@@ -137,6 +140,7 @@ namespace IssueLabelWatcherWebJob
         public string FindAllLabelledIssuesTiming { get; }
         public string FindRecentLabelledIssuesTiming { get; }
         public string GithubPersonalAccessToken { get; }
+        public uint LabelChunkSize { get; }
         public bool RandomlyDelayFindRecentLabelledIssues { get; }
         public ITargetRepo[] Repos { get; }
         public string SmtpServer { get; }
