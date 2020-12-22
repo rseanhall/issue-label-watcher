@@ -10,11 +10,13 @@ namespace IssueLabelWatcherWebJob
 {
     public interface IIlwState
     {
+        DateTime? LastRunTime { get; set; }
         Dictionary<string, HashSet<string>> IssuesByRepo { get; }
     }
 
     public class IlwState : IIlwState
     {
+        public DateTime? LastRunTime { get; set; }
         public Dictionary<string, HashSet<string>> IssuesByRepo { get; set; }
     }
 
@@ -45,6 +47,7 @@ namespace IssueLabelWatcherWebJob
             if (json != null)
             {
                 var stateObject = JsonConvert.DeserializeObject<IlwStateObject>(json);
+                state.LastRunTime = stateObject.LastRunTime;
                 foreach (var repo in stateObject.Repos)
                 {
                     state.IssuesByRepo.Add(repo.FullName, new HashSet<string>(repo.IssueNumbers));
@@ -58,6 +61,7 @@ namespace IssueLabelWatcherWebJob
         {
             var stateObject = new IlwStateObject
             {
+                LastRunTime = state.LastRunTime,
                 Repos = state.IssuesByRepo.Select(x => new IlwStateObject.Repo
                 {
                     FullName = x.Key,
@@ -103,6 +107,7 @@ namespace IssueLabelWatcherWebJob
 
     public class IlwStateObject
     {
+        public DateTime? LastRunTime { get; set; }
         public Repo[] Repos { get; set; }
 
         public class Repo

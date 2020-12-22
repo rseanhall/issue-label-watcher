@@ -34,11 +34,14 @@ namespace IssueLabelWatcherWebJob
 
         public Task FindAndNotifyRecentLabelledIssues(IIlwState state)
         {
-            return this.FindAndNotifyLabelledIssues(state, TimeSpan.FromDays(1));
+            var timeFromNow = state.LastRunTime.HasValue ? DateTime.UtcNow - state.LastRunTime.Value.AddHours(-1)
+                                                         : TimeSpan.FromDays(1);
+            return this.FindAndNotifyLabelledIssues(state, timeFromNow);
         }
 
         private async Task FindAndNotifyLabelledIssues(IIlwState state, TimeSpan? timeFromNow)
         {
+            state.LastRunTime = DateTime.UtcNow;
             var issuesByRepos = await _githubService.GetRecentIssuesWithLabel(timeFromNow);
             if (issuesByRepos == null)
             {
