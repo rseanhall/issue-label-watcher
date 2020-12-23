@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Threading.Tasks;
 using Microsoft.Azure.WebJobs;
+using Microsoft.Azure.WebJobs.Host;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -16,6 +17,7 @@ namespace IssueLabelWatcherWebJob
             var builder = new HostBuilder()
 #if DEBUG
                 .UseEnvironment("development")
+                .UseConsoleLifetime()
 #endif
                 .ConfigureWebJobs(b =>
                 {
@@ -46,6 +48,11 @@ namespace IssueLabelWatcherWebJob
                     s.AddSingleton<IGithubService, GithubService>();
                     s.AddSingleton<IIlwStateService, IlwStateService>();
                     s.AddSingleton<IIlwService, IlwService>();
+
+                    s.Configure<SingletonOptions>(o =>
+                    {
+                        o.LockPeriod = TimeSpan.FromMinutes(1);
+                    });
                 });
 
             var host = builder.Build();
