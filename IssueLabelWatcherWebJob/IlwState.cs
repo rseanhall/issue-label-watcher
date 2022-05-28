@@ -18,6 +18,11 @@ namespace IssueLabelWatcherWebJob
     {
         public DateTime? LastRunTime { get; set; }
         public Dictionary<string, HashSet<string>> IssuesByRepo { get; set; }
+
+        public IlwState(Dictionary<string, HashSet<string>> issuesByRepo)
+        {
+            this.IssuesByRepo = issuesByRepo;
+        }
     }
 
     public interface IIlwStateService
@@ -28,7 +33,7 @@ namespace IssueLabelWatcherWebJob
 
     public class IlwStateService : IIlwStateService
     {
-        private CloudBlockBlob _blob;
+        private CloudBlockBlob? _blob;
         private readonly IIlwConfiguration _configuration;
 
         public IlwStateService(IIlwConfiguration configuration)
@@ -39,18 +44,21 @@ namespace IssueLabelWatcherWebJob
         public async Task<IIlwState> Load()
         {
             var state = new IlwState
-            {
-                IssuesByRepo = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase),
-            };
+            (
+                new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
+            );
 
             var json = await this.ReadBlob();
             if (json != null)
             {
-                var stateObject = JsonConvert.DeserializeObject<IlwStateObject>(json);
+                var stateObject = JsonConvert.DeserializeObject<IlwStateObject>(json)!;
                 state.LastRunTime = stateObject.LastRunTime;
                 foreach (var repo in stateObject.Repos)
                 {
-                    state.IssuesByRepo.Add(repo.FullName, new HashSet<string>(repo.IssueNumbers));
+                    if (repo.FullName != null)
+                    {
+                        state.IssuesByRepo.Add(repo.FullName, new HashSet<string>(repo.IssueNumbers ?? Array.Empty<string>()));
+                    }
                 }
             }
 
@@ -87,7 +95,7 @@ namespace IssueLabelWatcherWebJob
             return _blob;
         }
 
-        private async Task<string> ReadBlob()
+        private async Task<string?> ReadBlob()
         {
             var blob = await this.GetBlob();
             if (!await blob.ExistsAsync())
@@ -110,10 +118,15 @@ namespace IssueLabelWatcherWebJob
         public DateTime? LastRunTime { get; set; }
         public Repo[] Repos { get; set; }
 
+        public IlwStateObject()
+        {
+            this.Repos = new Repo[0];
+        }
+
         public class Repo
         {
-            public string FullName { get; set; }
-            public string[] IssueNumbers { get; set; }
+            public string? FullName { get; set; }
+            public string[]? IssueNumbers { get; set; }
         }
     }
 }

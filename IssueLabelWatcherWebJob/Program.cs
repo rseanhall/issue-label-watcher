@@ -10,7 +10,7 @@ namespace IssueLabelWatcherWebJob
 {
     public class Program
     {
-        public static IServiceProvider ServiceProvider { get; private set; }
+        public static IServiceProvider? ServiceProvider { get; private set; }
 
         public static async Task Main()
         {

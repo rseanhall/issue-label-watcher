@@ -44,6 +44,16 @@ namespace IssueLabelWatcherWebJob
         public string[] TargetLabels { get; set; }
         public bool WatchPinnedIssues { get; set; }
         public bool WatchPullRequests { get; set; }
+
+        public TargetRepo(string fullName, string owner, string name, string[] targetLabels, bool watchPinnedIssues, bool watchPullRequests)
+        {
+            this.FullName = fullName;
+            this.Owner = owner;
+            this.Name = name;
+            this.TargetLabels = targetLabels;
+            this.WatchPinnedIssues = watchPinnedIssues;
+            this.WatchPullRequests = watchPullRequests;
+        }
     }
 
     public class IlwConfiguration : IIlwConfiguration
@@ -105,14 +115,14 @@ namespace IssueLabelWatcherWebJob
                     var watchPinnedIssues = configuration.GetValue<bool?>(string.Format(RepoWatchPinnedLabelsKeyFormat, repoString));
                     var watchPullRequests = configuration.GetValue<bool?>(string.Format(RepoWatchPullRequestsKeyFormat, repoString));
                     repos.Add(new TargetRepo
-                    {
-                        FullName = repoString,
-                        Owner = repoTokens[0],
-                        Name = repoTokens[1],
-                        TargetLabels = labels?.ToArray() ?? new string[0],
-                        WatchPinnedIssues = watchPinnedIssues.HasValue && watchPinnedIssues.Value,
-                        WatchPullRequests = watchPullRequests.HasValue && watchPullRequests.Value,
-                    });
+                    (
+                        repoString,
+                        repoTokens[0],
+                        repoTokens[1],
+                        labels?.ToArray() ?? new string[0],
+                        watchPinnedIssues.HasValue && watchPinnedIssues.Value,
+                        watchPullRequests.HasValue && watchPullRequests.Value
+                    ));
                 }
             }
             this.Repos = repos.ToArray();
@@ -126,7 +136,7 @@ namespace IssueLabelWatcherWebJob
             sb.AppendLine($"Repositories: {this.Repos.Length}");
             foreach (var repo in this.Repos)
             {
-                sb.AppendLine($"    {repo.Owner}/{repo.Name}: {repo.TargetLabels?.Length}");
+                sb.AppendLine($"    {repo.Owner}/{repo.Name}: {repo.TargetLabels.Length}");
                 foreach (var label in repo.TargetLabels)
                 {
                     sb.AppendLine($"        {label}");

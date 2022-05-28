@@ -8,11 +8,11 @@ namespace IssueLabelWatcherWebJob
     {
         private bool _firstOccurence = true; 
         private readonly TimerSchedule _inner;
-        private readonly Random _random;
+        private readonly Random? _random;
 
         public FindRecentLabelledIssuesTiming()
         {
-            var configuration = (IIlwConfiguration)Program.ServiceProvider.GetService(typeof(IIlwConfiguration));
+            var configuration = (IIlwConfiguration)Program.ServiceProvider!.GetService(typeof(IIlwConfiguration))!;
             var timing = configuration.FindRecentLabelledIssuesTiming;
             var parseOptions = CreateParseOptions(timing);
             var crontabSchedule = CrontabSchedule.TryParse(timing, parseOptions);

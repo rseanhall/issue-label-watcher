@@ -35,7 +35,7 @@ namespace IssueLabelWatcherWebJob
 
     public interface IGithubService
     {
-        Task<IGithubIssuesByRepo[]> GetRecentIssuesWithLabel(TimeSpan? timeFromNow);
+        Task<IGithubIssuesByRepo[]?> GetRecentIssuesWithLabel(TimeSpan? timeFromNow);
     }
 
     public class GithubIssue : IGithubIssue
@@ -49,12 +49,32 @@ namespace IssueLabelWatcherWebJob
         public string Title { get; set; }
         public DateTime UpdatedAt { get; set; }
         public string Url { get; set; }
+
+        public GithubIssue(bool isAlreadyViewed, string issueType, List<string> labels, string number, ITargetRepo repo, string status, string title, DateTime updatedAt, string url)
+        {
+            this.IsAlreadyViewed = isAlreadyViewed;
+            this.IssueType = issueType;
+            this.Labels = labels;
+            this.Number = number;
+            this.Repo = repo;
+            this.Status = status;
+            this.Title = title;
+            this.UpdatedAt = updatedAt;
+            this.Url = url;
+        }
     }
 
     public class GithubIssuesByRepo : IGithubIssuesByRepo
     {
         public ITargetRepo Repo { get; set; }
+
         public IGithubIssue[] Issues { get; set; }
+
+        public GithubIssuesByRepo(ITargetRepo repo, IGithubIssue[] issues)
+        {
+            this.Repo = repo;
+            this.Issues = issues;
+        }
     }
 
     public class GithubIssueListByRepo
@@ -62,9 +82,19 @@ namespace IssueLabelWatcherWebJob
         public ITargetRepo Repo { get; set; }
         public string RepoAlias { get; set; }
         public List<GithubIssueListLabel> Labels { get; set; }
-        public Dictionary<string, GithubIssueListIssue> IssuesByNumber { get; } = new Dictionary<string, GithubIssueListIssue>();
-        public HashSet<string> IssuesWithMoreLabelPages { get; } = new HashSet<string>();
+        public Dictionary<string, GithubIssueListIssue> IssuesByNumber { get; }
+        public HashSet<string> IssuesWithMoreLabelPages { get; }
         public GithubIssueListWatchPinned WatchPinned { get; set; }
+
+        public GithubIssueListByRepo(List<GithubIssueListLabel> labels, ITargetRepo repo, string repoAlias, GithubIssueListWatchPinned watchPinned)
+        {
+            this.IssuesByNumber = new Dictionary<string, GithubIssueListIssue>();
+            this.IssuesWithMoreLabelPages = new HashSet<string>();
+            this.Labels = labels;
+            this.Repo = repo;
+            this.RepoAlias = repoAlias;
+            this.WatchPinned = watchPinned;
+        }
     }
 
     public class GithubIssueListLabel
@@ -97,6 +127,13 @@ namespace IssueLabelWatcherWebJob
         public bool IsPR { get; set; }
         public GithubIssue Issue { get; set; }
         public string LabelAfterCursor { get; set; }
+
+        public GithubIssueListIssue(bool isPR, GithubIssue issue, string labelAfterCursor)
+        {
+            this.IsPR = isPR;
+            this.Issue = issue;
+            this.LabelAfterCursor = labelAfterCursor;
+        }
     }
 
     public class GithubIssueListWatchPinned
@@ -167,7 +204,7 @@ namespace IssueLabelWatcherWebJob
             return true;
         }
 
-        private async Task<List<GithubIssueListByRepo>> PrepareRepoList()
+        private async Task<List<GithubIssueListByRepo>?> PrepareRepoList()
         {
             var repoList = new List<GithubIssueListByRepo>();
             var labelListByRepo = new Dictionary<string, GithubLabelList>();
@@ -186,12 +223,12 @@ namespace IssueLabelWatcherWebJob
             {
                 var repoAlias = GetGraphQLAlias($"{targetRepo.Owner}_{targetRepo.Name}");
                 var repo = new GithubIssueListByRepo
-                {
-                    Labels = new List<GithubIssueListLabel>(),
-                    Repo = targetRepo,
-                    RepoAlias = repoAlias,
-                    WatchPinned = new GithubIssueListWatchPinned(targetRepo.WatchPinnedIssues, repoAlias),
-                };
+                (
+                    new List<GithubIssueListLabel>(),
+                    targetRepo,
+                    repoAlias,
+                    new GithubIssueListWatchPinned(targetRepo.WatchPinnedIssues, repoAlias)
+                );
                 repoList.Add(repo);
 
                 var labelList = new GithubLabelList(repoAlias);
@@ -244,7 +281,7 @@ namespace IssueLabelWatcherWebJob
                 return null;
             }
 
-            var rateLimit = rateLimitRequest.Data.RateLimit;
+            RateLimit rateLimit = rateLimitRequest.Data.RateLimit!;
             variables["dryRun"] = false;
 
             var hasMorePages = true;
@@ -283,8 +320,8 @@ namespace IssueLabelWatcherWebJob
                     break;
                 }
 
-                var rateLimitObject = labelsRequest.Data["rateLimit"];
-                rateLimit = rateLimitObject.ToObject<RateLimit>();
+                JToken rateLimitObject = labelsRequest.Data["rateLimit"]!;
+                rateLimit = rateLimitObject.ToObject<RateLimit>()!;
                 _logger.LogDebug("Rate limit {RateLimit}", rateLimitObject.ToString());
 
                 foreach (var repo in repoList)
@@ -300,15 +337,15 @@ namespace IssueLabelWatcherWebJob
                     var labelListResult = repoObject["labels"]?.ToObject<GraphQLLabelListResult>();
                     if (labelListResult != null)
                     {
-                        variables[labelList.AfterVariableName] = labelListResult.PageInfo.EndCursor;
+                        variables[labelList.AfterVariableName] = labelListResult.PageInfo!.EndCursor;
                         variables[labelList.IncludeVariableName] = labelListResult.PageInfo.HasNextPage;
                         hasMorePages |= labelListResult.PageInfo.HasNextPage;
 
-                        foreach (var node in labelListResult.Nodes)
+                        foreach (var node in labelListResult.Nodes!)
                         {
-                            if (labelList.LabelByName.TryGetValue(node.Name, out var labels))
+                            if (labelList.LabelByName.TryGetValue(node.Name!, out var labels))
                             {
-                                labels.Add(node.Name);
+                                labels.Add(node.Name!);
                             }
                         }
                     }
@@ -349,7 +386,7 @@ namespace IssueLabelWatcherWebJob
             return repoList;
         }
 
-        public async Task<IGithubIssuesByRepo[]> GetRecentIssuesWithLabel(TimeSpan? timeFromNow)
+        public async Task<IGithubIssuesByRepo[]?> GetRecentIssuesWithLabel(TimeSpan? timeFromNow)
         {
             var repoList = await this.PrepareRepoList();
             if (repoList == null)
@@ -500,7 +537,7 @@ namespace IssueLabelWatcherWebJob
                 return null;
             }
 
-            var rateLimit = rateLimitRequest.Data.RateLimit;
+            RateLimit rateLimit = rateLimitRequest.Data.RateLimit!;
             variables["dryRun"] = false;
 
             var hasMorePages = true;
@@ -539,8 +576,8 @@ namespace IssueLabelWatcherWebJob
                     break;
                 }
 
-                var rateLimitObject = recentIssueRequest.Data["rateLimit"];
-                rateLimit = rateLimitObject.ToObject<RateLimit>();
+                JToken rateLimitObject = recentIssueRequest.Data["rateLimit"]!;
+                rateLimit = rateLimitObject.ToObject<RateLimit>()!;
                 _logger.LogDebug("Rate limit {RateLimit}", rateLimitObject.ToString());
 
                 foreach (var repo in repoList)
@@ -554,13 +591,13 @@ namespace IssueLabelWatcherWebJob
                     var pinnedIssueResult = repoObject["pinnedIssues"]?.ToObject<GraphQLPinnedIssueResult>();
                     if (pinnedIssueResult != null)
                     {
-                        variables[repo.WatchPinned.AfterVariableName] = pinnedIssueResult.PageInfo.EndCursor;
+                        variables[repo.WatchPinned.AfterVariableName] = pinnedIssueResult.PageInfo!.EndCursor;
                         variables[repo.WatchPinned.IncludeVariableName] = pinnedIssueResult.PageInfo.HasNextPage;
                         hasMorePages |= pinnedIssueResult.PageInfo.HasNextPage;
 
-                        foreach (var node in pinnedIssueResult.Nodes)
+                        foreach (var node in pinnedIssueResult.Nodes!)
                         {
-                            ProcessIssue(node.Issue, repo, "Pinned");
+                            ProcessIssue(node.Issue!, repo, "Pinned");
                         }
                     }
 
@@ -569,11 +606,11 @@ namespace IssueLabelWatcherWebJob
                         var labelResult = repoObject[labelAlias.Alias]?.ToObject<GraphQLLabelResult>();
                         if (labelResult != null)
                         {
-                            variables[labelAlias.AfterVariableName] = labelResult.PageInfo.EndCursor;
+                            variables[labelAlias.AfterVariableName] = labelResult.PageInfo!.EndCursor;
                             variables[labelAlias.IncludeVariableName] = labelResult.PageInfo.HasNextPage;
                             hasMorePages |= labelResult.PageInfo.HasNextPage;
 
-                            foreach (var issue in labelResult.Nodes)
+                            foreach (var issue in labelResult.Nodes!)
                             {
                                 ProcessIssue(issue, repo, "Issue");
                             }
@@ -582,10 +619,10 @@ namespace IssueLabelWatcherWebJob
                         var prResult = repoObject[labelAlias.PRAlias]?.ToObject<GraphQLLabelResult>();
                         if (prResult != null)
                         {
-                            variables[labelAlias.PRAfterVariableName] = prResult.PageInfo.EndCursor;
+                            variables[labelAlias.PRAfterVariableName] = prResult.PageInfo!.EndCursor;
                             var prHasMorePages = prResult.PageInfo.HasNextPage;
 
-                            foreach (var issue in prResult.Nodes)
+                            foreach (var issue in prResult.Nodes!)
                             {
                                 // Workaround the lack of filtering for pull requests.
                                 if (!since.HasValue || issue.UpdatedAt > since)
@@ -608,7 +645,7 @@ namespace IssueLabelWatcherWebJob
 
             await GetRestOfIssueLabels(repoList, labelChunkSize);
 
-            var results = repoList.Select(x => new GithubIssuesByRepo { Repo = x.Repo, Issues = x.IssuesByNumber.Values.Select(x => x.Issue).ToArray() }).ToArray();
+            var results = repoList.Select(x => new GithubIssuesByRepo (x.Repo, x.IssuesByNumber.Values.Select(x => x.Issue).ToArray())).ToArray();
             return results;
         }
 
@@ -616,24 +653,24 @@ namespace IssueLabelWatcherWebJob
         {
             var isPR = issue.TypeName == "PullRequest";
             var newIssue = new GithubIssue
-            {
-                IsAlreadyViewed = issue.ViewerSubscription != "UNSUBSCRIBED",
-                IssueType = issueType,
-                Labels = issue.Labels.Nodes.Select(n => n.Name).ToList(),
-                Number = issue.Number,
-                Repo = repo.Repo,
-                Status = isPR ? issue.PRState : issue.IssueState,
-                Title = issue.Title,
-                UpdatedAt = issue.UpdatedAt,
-                Url = issue.Url,
-            };
+            (
+                issue.ViewerSubscription != "UNSUBSCRIBED",
+                issueType,
+                issue.Labels!.Nodes!.Select(n => n.Name!).ToList(),
+                issue.Number!,
+                repo.Repo,
+                isPR ? issue.PRState! : issue.IssueState!,
+                issue.Title!,
+                issue.UpdatedAt,
+                issue.Url!
+            );
 
             var listIssue = new GithubIssueListIssue
-            {
-                IsPR = isPR,
-                Issue = newIssue,
-                LabelAfterCursor = issue.Labels.PageInfo.EndCursor,
-            };
+            (
+                isPR,
+                newIssue,
+                issue.Labels.PageInfo!.EndCursor!
+            );
 
             if (repo.IssuesByNumber.TryAdd(newIssue.Number, listIssue) &&
                 issue.Labels.PageInfo.HasNextPage)
@@ -645,11 +682,11 @@ namespace IssueLabelWatcherWebJob
         private void AddIssueLabels(string number, GithubIssueListByRepo repo, GraphQLIssueLabelNodes labels)
         {
             var listIssue = repo.IssuesByNumber[number];
-            listIssue.Issue.Labels.AddRange(labels.Nodes.Select(n => n.Name));
+            listIssue.Issue.Labels.AddRange(labels.Nodes!.Select(n => n.Name!));
             
-            if (labels.PageInfo.HasNextPage)
+            if (labels.PageInfo!.HasNextPage)
             {
-                listIssue.LabelAfterCursor = labels.PageInfo.EndCursor;
+                listIssue.LabelAfterCursor = labels.PageInfo.EndCursor!;
             }
             else
             {
@@ -661,7 +698,7 @@ namespace IssueLabelWatcherWebJob
         {
             var maxItems = repoList.Sum(r => r.Labels.Count * _configuration.ChunkSize * 2);
 
-            RateLimit rateLimit = null;
+            RateLimit? rateLimit = null;
             while (repoList.Any(r => r.IssuesWithMoreLabelPages.Any()))
             {
                 var remainingItems = maxItems;
@@ -729,7 +766,7 @@ namespace IssueLabelWatcherWebJob
                         return;
                     }
 
-                    rateLimit = rateLimitRequest.Data.RateLimit;
+                    rateLimit = rateLimitRequest.Data.RateLimit!;
                 }
 
                 if (!this.CanMakeGraphQLRequests(rateLimit))
@@ -762,8 +799,8 @@ namespace IssueLabelWatcherWebJob
                     break;
                 }
 
-                var rateLimitObject = issueLabelsRequest.Data["rateLimit"];
-                rateLimit = rateLimitObject.ToObject<RateLimit>();
+                JToken rateLimitObject = issueLabelsRequest.Data["rateLimit"]!;
+                rateLimit = rateLimitObject.ToObject<RateLimit>()!;
                 _logger.LogDebug("Rate limit {RateLimit}", rateLimitObject.ToString());
 
                 var processedIssue = false;
@@ -779,8 +816,8 @@ namespace IssueLabelWatcherWebJob
                     {
                         processedIssue = true;
                         var issueNumber = child.Name.Substring(1);
-                        var issueOrPullRequest = child.Value.ToObject<GraphQLIssueOrPullRequest>();
-                        AddIssueLabels(issueNumber, repo, issueOrPullRequest.Labels);
+                        GraphQLIssueOrPullRequest issueOrPullRequest = child.Value.ToObject<GraphQLIssueOrPullRequest>()!;
+                        AddIssueLabels(issueNumber, repo, issueOrPullRequest.Labels!);
                     }
                 }
 
@@ -804,7 +841,7 @@ namespace IssueLabelWatcherWebJob
 
         public class RateLimitGraphQLRequest
         {
-            public RateLimit RateLimit { get; set; }
+            public RateLimit? RateLimit { get; set; }
         }
 
         public class RateLimit
@@ -813,7 +850,7 @@ namespace IssueLabelWatcherWebJob
             public int Limit { get; set; }
             public int NodeCount { get; set; }
             public int Remaining { get; set; }
-            public string ResetAt { get; set; }
+            public string? ResetAt { get; set; }
             public int Used { get; set; }
 
             public static void AppendQuery(StringBuilder sb, int i)
@@ -831,55 +868,55 @@ namespace IssueLabelWatcherWebJob
 
         public class GraphQLLabelResult
         {
-            public GraphQLIssueOrPullRequest[] Nodes { get; set; }
-            public GraphQLPageInfo PageInfo { get; set; }
+            public GraphQLIssueOrPullRequest[]? Nodes { get; set; }
+            public GraphQLPageInfo? PageInfo { get; set; }
         }
 
         public class GraphQLPageInfo
         {
-            public string EndCursor { get; set; }
+            public string? EndCursor { get; set; }
             public bool HasNextPage { get; set; }
         }
 
         public class GraphQLIssueOrPullRequest
         {
-            public string IssueState { get; set; }
-            public GraphQLIssueLabelNodes Labels { get; set; }
-            public string Number { get; set; }
-            public string PRState { get; set; }
-            public string Title { get; set; }
-            public string TypeName { get; set; }
+            public string? IssueState { get; set; }
+            public GraphQLIssueLabelNodes? Labels { get; set; }
+            public string? Number { get; set; }
+            public string? PRState { get; set; }
+            public string? Title { get; set; }
+            public string? TypeName { get; set; }
             public DateTime UpdatedAt { get; set; }
-            public string Url { get; set; }
-            public string ViewerSubscription { get; set; }
+            public string? Url { get; set; }
+            public string? ViewerSubscription { get; set; }
         }
 
         public class GraphQLIssueLabelNodes
         {
-            public GraphQLIssueLabel[] Nodes { get; set; }
-            public GraphQLPageInfo PageInfo { get; set; }
+            public GraphQLIssueLabel[]? Nodes { get; set; }
+            public GraphQLPageInfo? PageInfo { get; set; }
         }
 
         public class GraphQLIssueLabel
         {
-            public string Name { get; set; }
+            public string? Name { get; set; }
         }
 
         public class GraphQLLabelListResult
         {
-            public GraphQLIssueLabel[] Nodes { get; set; }
-            public GraphQLPageInfo PageInfo { get; set; }
+            public GraphQLIssueLabel[]? Nodes { get; set; }
+            public GraphQLPageInfo? PageInfo { get; set; }
         }
 
         public class GraphQLPinnedIssueResult
         {
-            public GraphQLPinnedIssue[] Nodes { get; set; }
-            public GraphQLPageInfo PageInfo { get; set; }
+            public GraphQLPinnedIssue[]? Nodes { get; set; }
+            public GraphQLPageInfo? PageInfo { get; set; }
         }
 
         public class GraphQLPinnedIssue
         {
-            public GraphQLIssueOrPullRequest Issue { get; set; }
+            public GraphQLIssueOrPullRequest? Issue { get; set; }
         }
     }
 }
