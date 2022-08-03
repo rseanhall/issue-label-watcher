@@ -18,18 +18,18 @@ namespace IssueLabelWatcherWebJob
         [Singleton(SingletonScopeName, SingletonScope.Host)]
         public async Task FindRecentLabelledIssues([TimerTrigger(typeof(FindRecentLabelledIssuesTiming), UseMonitor = false)] TimerInfo timerInfo)
         {
-            var state = await _ilwStateService.Load();
+            var state = await _ilwStateService.LoadIssues();
             await _ilwService.FindAndNotifyRecentLabelledIssues(state);
-            await _ilwStateService.Save(state);
+            await _ilwStateService.SaveIssues(state);
         }
 
         [Disable(typeof(DisableFindAllLabelledIssues))]
         [Singleton(SingletonScopeName, SingletonScope.Host)]
         public async Task FindAllLabelledIssues([TimerTrigger("%" + IlwConfiguration.FindAllLabelledIssuesTimingKey + "%", UseMonitor = false)] TimerInfo timerInfo)
         {
-            var state = await _ilwStateService.Load();
+            var state = await _ilwStateService.LoadIssues();
             await _ilwService.FindAndNotifyAllLabelledIssues(state);
-            await _ilwStateService.Save(state);
+            await _ilwStateService.SaveIssues(state);
         }
     }
 }

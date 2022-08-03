@@ -24,6 +24,16 @@ namespace IssueLabelWatcherWebJob
         string FindAllLabelledIssuesTiming { get; }
         string FindRecentLabelledIssuesTiming { get; }
         string GithubPersonalAccessToken { get; }
+        bool GmailAllowAuthenticationRequest { get; }
+        string? GmailAzureApplicationId { get; }
+        string? GmailAzureKeyVaultUrl { get; }
+        string? GmailAzureTenantId { get; }
+        string? GmailClientId { get; }
+        string? GmailClientSecret { get; }
+        string? GmailConfigurationPrefix { get; }
+        bool GmailEnabled { get; }
+        string? GmailFrom { get; }
+        string? GmailTo { get; }
         uint LabelChunkSize { get; }
         bool RandomlyDelayFindRecentLabelledIssues { get; }
         ITargetRepo[] Repos { get; }
@@ -34,6 +44,8 @@ namespace IssueLabelWatcherWebJob
         string SmtpUsername { get; }
         string SmtpPassword { get; }
         string StorageAccountConnectionString { get; }
+
+        void PrintConfiguration(ILogger logger);
     }
 
     public class TargetRepo : ITargetRepo
@@ -63,6 +75,16 @@ namespace IssueLabelWatcherWebJob
         public const string FindAllLabelledIssuesTimingKey = "ilw:FindAllLabelledIssuesTiming";
         public const string FindRecentLabelledIssuesTimingKey = "ilw:FindRecentLabelledIssuesTiming";
         public const string GithubPersonalAccessTokenKey = "ilw:GithubPersonalAccessToken";
+        public const string GmailAllowAuthenticationRequestKey = "ilw:GmailAllowAuthenticationRequest";
+        public const string GmailAzureApplicationIdKey = "ilw:GmailAzureApplicationId";
+        public const string GmailAzureKeyVaultUrlKey = "ilw:GmailAzureKeyVaultUrl";
+        public const string GmailAzureTenantIdKey = "ilw:GmailAzureTenantId";
+        public const string GmailClientIdKey = "ilw:GmailClientId";
+        public const string GmailClientSecretKey = "ilw:GmailClientSecret";
+        public const string GmailConfigurationPrefixKey = "ilw:GmailConfigurationPrefix";
+        public const string GmailEnabledKey = "ilw:GmailEnabled";
+        public const string GmailFromKey = "ilw:GmailFrom";
+        public const string GmailToKey = "ilw:GmailTo";
         public const string LabelChunkSizeKey = "ilw:LabelChunkSize";
         public const string RandomlyDelayFindRecentLabelledIssuesKey = "ilw:RandomlyDelayFindRecentLabelledIssues";
         public const string ReposKey = "ilw:Repos";
@@ -77,17 +99,23 @@ namespace IssueLabelWatcherWebJob
         public const string SmtpPasswordKey = "ilw:SmtpPassword";
         public const string StorageAccountConnectionStringKey = "AzureWebJobsStorage";
 
-        private readonly ILogger _logger;
-
-        public IlwConfiguration(IConfiguration configuration, ILogger<IlwConfiguration> logger)
+        public IlwConfiguration(IConfiguration configuration)
         {
-            _logger = logger;
-
             this.ChunkSize = configuration.GetValue<uint>(ChunkSizeKey, 10);
             this.EnableFindAllLabelledIssues = configuration.GetValue<bool?>(EnableFindAllLabelledIssuesKey) == true;
             this.FindAllLabelledIssuesTiming = configuration.GetValue(FindAllLabelledIssuesTimingKey, "0 0 0 * * *");
             this.FindRecentLabelledIssuesTiming = configuration.GetValue(FindRecentLabelledIssuesTimingKey, "00:15:00");
             this.GithubPersonalAccessToken = configuration.GetValue<string>(GithubPersonalAccessTokenKey);
+            this.GmailAllowAuthenticationRequest = configuration.GetValue<bool?>(GmailAllowAuthenticationRequestKey) == true;
+            this.GmailAzureApplicationId = configuration.GetValue<string>(GmailAzureApplicationIdKey);
+            this.GmailAzureKeyVaultUrl = configuration.GetValue<string>(GmailAzureKeyVaultUrlKey);
+            this.GmailAzureTenantId = configuration.GetValue<string>(GmailAzureTenantIdKey);
+            this.GmailClientId = configuration.GetValue<string>(GmailClientIdKey);
+            this.GmailClientSecret = configuration.GetValue<string>(GmailClientSecretKey);
+            this.GmailConfigurationPrefix = configuration.GetValue<string>(GmailConfigurationPrefixKey);
+            this.GmailEnabled = configuration.GetValue<bool?>(GmailEnabledKey) == true;
+            this.GmailFrom = configuration.GetValue<string>(GmailFromKey);
+            this.GmailTo = configuration.GetValue<string>(GmailToKey);
             this.LabelChunkSize = configuration.GetValue<uint>(LabelChunkSizeKey, 10);
             this.RandomlyDelayFindRecentLabelledIssues = configuration.GetValue<bool?>(RandomlyDelayFindRecentLabelledIssuesKey) == true;
             this.SmtpServer = configuration.GetValue<string>(SmtpServerKey);
@@ -97,6 +125,11 @@ namespace IssueLabelWatcherWebJob
             this.SmtpUsername = configuration.GetValue<string>(SmtpUsernameKey);
             this.SmtpPassword = configuration.GetValue<string>(SmtpPasswordKey);
             this.StorageAccountConnectionString = configuration.GetConnectionStringOrSetting(StorageAccountConnectionStringKey);
+
+            if (string.IsNullOrEmpty(this.GmailConfigurationPrefix))
+            {
+                this.GmailConfigurationPrefix = null;
+            }
 
             var repos = new List<TargetRepo>();
             var repoStrings = configuration.GetValue<string>(ReposKey)
@@ -126,11 +159,9 @@ namespace IssueLabelWatcherWebJob
                 }
             }
             this.Repos = repos.ToArray();
-
-            PrintConfiguration();
         }
 
-        private void PrintConfiguration()
+        public void PrintConfiguration(ILogger logger)
         {
             var sb = new StringBuilder();
             sb.AppendLine($"Repositories: {this.Repos.Length}");
@@ -142,7 +173,7 @@ namespace IssueLabelWatcherWebJob
                     sb.AppendLine($"        {label}");
                 }
             }
-            _logger.LogInformation(sb.ToString());
+            logger.LogInformation(sb.ToString());
         }
 
         public uint ChunkSize { get; }
@@ -150,6 +181,16 @@ namespace IssueLabelWatcherWebJob
         public string FindAllLabelledIssuesTiming { get; }
         public string FindRecentLabelledIssuesTiming { get; }
         public string GithubPersonalAccessToken { get; }
+        public bool GmailAllowAuthenticationRequest { get; }
+        public string? GmailAzureApplicationId { get; }
+        public string? GmailAzureKeyVaultUrl { get; }
+        public string? GmailAzureTenantId { get; }
+        public string? GmailClientId { get; }
+        public string? GmailClientSecret { get; }
+        public string? GmailConfigurationPrefix { get; }
+        public bool GmailEnabled { get; }
+        public string? GmailFrom { get; }
+        public string? GmailTo { get; }
         public uint LabelChunkSize { get; }
         public bool RandomlyDelayFindRecentLabelledIssues { get; }
         public ITargetRepo[] Repos { get; }

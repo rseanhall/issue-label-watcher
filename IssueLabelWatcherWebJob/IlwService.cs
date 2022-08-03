@@ -10,8 +10,8 @@ namespace IssueLabelWatcherWebJob
 {
     public interface IIlwService
     {
-        Task FindAndNotifyAllLabelledIssues(IIlwState state);
-        Task FindAndNotifyRecentLabelledIssues(IIlwState state);
+        Task FindAndNotifyAllLabelledIssues(IIlwIssuesState state);
+        Task FindAndNotifyRecentLabelledIssues(IIlwIssuesState state);
     }
 
     public class IlwService : IIlwService
@@ -27,19 +27,19 @@ namespace IssueLabelWatcherWebJob
             _logger = logger;
         }
 
-        public Task FindAndNotifyAllLabelledIssues(IIlwState state)
+        public Task FindAndNotifyAllLabelledIssues(IIlwIssuesState state)
         {
             return this.FindAndNotifyLabelledIssues(state, null);
         }
 
-        public Task FindAndNotifyRecentLabelledIssues(IIlwState state)
+        public Task FindAndNotifyRecentLabelledIssues(IIlwIssuesState state)
         {
             var timeFromNow = state.LastRunTime.HasValue ? DateTime.UtcNow - state.LastRunTime.Value.AddHours(-1)
                                                          : TimeSpan.FromDays(1);
             return this.FindAndNotifyLabelledIssues(state, timeFromNow);
         }
 
-        private async Task FindAndNotifyLabelledIssues(IIlwState state, TimeSpan? timeFromNow)
+        private async Task FindAndNotifyLabelledIssues(IIlwIssuesState state, TimeSpan? timeFromNow)
         {
             state.LastRunTime = DateTime.UtcNow;
             var issuesByRepos = await _githubService.GetRecentIssuesWithLabel(timeFromNow);
@@ -67,10 +67,12 @@ namespace IssueLabelWatcherWebJob
             }
         }
 
-        private void CreateAndSendEmail(IIlwState state, IGithubIssuesByRepo[] issuesByRepos)
+        private void CreateAndSendEmail(IIlwIssuesState state, IGithubIssuesByRepo[] issuesByRepos)
         {
+            //https://developers.google.com/gmail/markup/reference/go-to-action#json-ld
             var total = 0;
             var fragments = new List<string>();
+            string? singleIssueUrl = null;
             foreach (var issuesByRepo in issuesByRepos)
             {
                 if (!state.IssuesByRepo.TryGetValue(issuesByRepo.Repo.FullName, out var stateIssues))
@@ -107,6 +109,15 @@ namespace IssueLabelWatcherWebJob
                 fragment.AppendLine("<table>");
                 foreach (var issue in issues)
                 {
+                    if (singleIssueUrl == null)
+                    {
+                        singleIssueUrl = issue.Url;
+                    }
+                    else
+                    {
+                        singleIssueUrl = string.Empty;
+                    }
+
                     var labels = string.Join(", ", issue.Labels.Select(x => HttpUtility.HtmlEncode(x)));
                     var safeTitle = HttpUtility.HtmlEncode(issue.Title);
                     fragment.AppendLine($"<tr><td><a href=\"{issue.Url}\">{issue.Number}</a></td><td>{issue.IssueType}</td><td>{safeTitle}</td></tr>");
@@ -124,6 +135,34 @@ namespace IssueLabelWatcherWebJob
 
             var sb = new StringBuilder();
             sb.AppendLine("<html><body>");
+            if (!string.IsNullOrEmpty(singleIssueUrl))
+            {
+                sb.AppendLine($"<script type=\"application/ld+json\">" +
+                    "{" +
+                    "  \"@context\": \"http://schema.org\"," +
+                    "  \"@type\": \"EmailMessage\"," +
+                    "  \"potentialAction\": {" +
+                    "    \"@type\": \"ViewAction\"," +
+                    $"    \"target\": \"{singleIssueUrl}\"," +
+                    $"    \"url\": \"{singleIssueUrl}\"," +
+                    "    \"name\": \"View Issue\"" +
+                    "  }," +
+                    "  \"description\": \"View the issue or PR on GitHub\"," +
+                    "  \"publisher\": {" +
+                    "    \"@type\": \"Organization\"," +
+                    "    \"url\": \"https://github.com/rseanhall/issue-label-watcher\"," +
+                    "    \"name\": \"IssueLabelWatcher\"" +
+                    "  }" +
+                    "}" +
+                    "</script>");
+                /*sb.AppendLine("<div itemscope itemtype='http://schema.org/EmailMessage'>");
+                sb.AppendLine("<div itemprop='potentialAction' itemscope itemtype='http://schema.org/ViewAction'>");
+                sb.AppendLine($"<link itemprop='url' href='{singleIssueUrl}'/>");
+                sb.AppendLine("<meta itemprop='name' content='View Issue'/>");
+                sb.AppendLine("</div>");
+                sb.AppendLine("<meta itemprop='description' content='View the issue or PR on GitHub'/>");
+                sb.AppendLine("</div>");*/
+            }
             foreach (string fragment in fragments)
             {
                 sb.Append(fragment);

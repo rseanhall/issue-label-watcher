@@ -3,11 +3,6 @@ using System.Net.Mail;
 
 namespace IssueLabelWatcherWebJob
 {
-    public interface IEmailSender
-    {
-        void SendHtmlEmail(string subject, string htmlBody);
-    }
-
     public class SmtpEmailSender : IEmailSender
     {
         private readonly IIlwConfiguration _configuration;
@@ -21,9 +16,19 @@ namespace IssueLabelWatcherWebJob
 
         public void SendHtmlEmail(string subject, string htmlBody)
         {
-            var message = new MailMessage(_configuration.SmtpFrom, _configuration.SmtpTo, subject, htmlBody)
+            this.SendEmail(subject, htmlBody, true);
+        }
+
+        public void SendPlainTextEmail(string subject, string plainTextBody)
+        {
+            this.SendEmail(subject, plainTextBody, false);
+        }
+
+        private void SendEmail(string subject, string body, bool isHtml)
+        {
+            var message = new MailMessage(_configuration.SmtpFrom, _configuration.SmtpTo, subject, body)
             {
-                IsBodyHtml = true,
+                IsBodyHtml = isHtml,
             };
 
             var smtpClient = new SmtpClient(_configuration.SmtpServer)

@@ -10,6 +10,8 @@ namespace IssueLabelWatcherWebJob
 {
     public class Program
     {
+        public const string ApplicationUserAgent = $"issue-label-watcher-{ThisAssembly.AssemblyInformationalVersion}";
+
         public static IServiceProvider? ServiceProvider { get; private set; }
 
         public static async Task Main()
@@ -40,14 +42,16 @@ namespace IssueLabelWatcherWebJob
                         b.AddFilter(nameof(IssueLabelWatcherWebJob), LogLevel.Debug);
                     }
                 })
-                .ConfigureServices(s =>
+                .ConfigureServices((context, s) =>
                 {
                     s.AddSingleton<IIlwConfiguration, IlwConfiguration>();
                     s.AddSingleton<INameResolver, IlwNameResolver>();
-                    s.AddSingleton<IEmailSender, SmtpEmailSender>();
+                    s.AddSingleton<IEmailSender, EmailSender>();
                     s.AddSingleton<IGithubService, GithubService>();
                     s.AddSingleton<IIlwStateService, IlwStateService>();
                     s.AddSingleton<IIlwService, IlwService>();
+                    s.AddSingleton<SmtpEmailSender>();
+                    s.AddGoogleServices();
 
                     s.Configure<SingletonOptions>(o =>
                     {
@@ -56,9 +60,17 @@ namespace IssueLabelWatcherWebJob
                 });
 
             var host = builder.Build();
-            ServiceProvider = host.Services;
             using (host)
             {
+                ServiceProvider = host.Services;
+
+                var logger = ServiceProvider.GetRequiredService<ILogger<IlwConfiguration>>();
+                var ilwConfiguration = ServiceProvider.GetRequiredService<IIlwConfiguration>();
+                ilwConfiguration!.PrintConfiguration(logger);
+
+                var googleCredentialService = ServiceProvider.GetRequiredService<IGoogleCredentialService>();
+                await googleCredentialService.Initialize(default);
+
                 await host.RunAsync();
             }
         }

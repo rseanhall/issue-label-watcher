@@ -8,32 +8,47 @@ using System.Threading.Tasks;
 
 namespace IssueLabelWatcherWebJob
 {
-    public interface IIlwState
+    public interface IIlwIssuesState
     {
         DateTime? LastRunTime { get; set; }
         Dictionary<string, HashSet<string>> IssuesByRepo { get; }
     }
 
-    public class IlwState : IIlwState
+    public class IlwIssuesState : IIlwIssuesState
     {
         public DateTime? LastRunTime { get; set; }
         public Dictionary<string, HashSet<string>> IssuesByRepo { get; set; }
 
-        public IlwState(Dictionary<string, HashSet<string>> issuesByRepo)
+        public IlwIssuesState(Dictionary<string, HashSet<string>> issuesByRepo)
         {
             this.IssuesByRepo = issuesByRepo;
         }
     }
 
+    public interface IIlwGoogleState
+    {
+        bool ExpiredAuthEmailSent { get; set; }
+    }
+
+    public class IlwGoogleState : IIlwGoogleState
+    {
+        public bool ExpiredAuthEmailSent { get; set; }
+    }
+
     public interface IIlwStateService
     {
-        Task<IIlwState> Load();
-        Task Save(IIlwState state);
+        Task<IIlwGoogleState> LoadGoogle();
+        Task<IIlwIssuesState> LoadIssues();
+        Task SaveGoogle(IIlwGoogleState state);
+        Task SaveIssues(IIlwIssuesState state);
     }
 
     public class IlwStateService : IIlwStateService
     {
-        private CloudBlockBlob? _blob;
+        private CloudBlobContainer? _container;
+        private CloudBlockBlob? _googleBlob;
+        private CloudBlockBlob? _issuesBlob;
+
         private readonly IIlwConfiguration _configuration;
 
         public IlwStateService(IIlwConfiguration configuration)
@@ -41,17 +56,31 @@ namespace IssueLabelWatcherWebJob
             _configuration = configuration;
         }
 
-        public async Task<IIlwState> Load()
+        public async Task<IIlwGoogleState> LoadGoogle()
         {
-            var state = new IlwState
+            var state = new IlwGoogleState();
+
+            var json = await this.ReadGoogleBlob();
+            if (json != null)
+            {
+                var stateObject = JsonConvert.DeserializeObject<IlwGoogleStateObject>(json)!;
+                state.ExpiredAuthEmailSent = stateObject.ExpiredAuthEmailSent;
+            }
+
+            return state;
+        }
+
+        public async Task<IIlwIssuesState> LoadIssues()
+        {
+            var state = new IlwIssuesState
             (
                 new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
             );
 
-            var json = await this.ReadBlob();
+            var json = await this.ReadIssuesBlob();
             if (json != null)
             {
-                var stateObject = JsonConvert.DeserializeObject<IlwStateObject>(json)!;
+                var stateObject = JsonConvert.DeserializeObject<IlwIssuesStateObject>(json)!;
                 state.LastRunTime = stateObject.LastRunTime;
                 foreach (var repo in stateObject.Repos)
                 {
@@ -65,12 +94,23 @@ namespace IssueLabelWatcherWebJob
             return state;
         }
 
-        public Task Save(IIlwState state)
+        public Task SaveGoogle(IIlwGoogleState state)
         {
-            var stateObject = new IlwStateObject
+            var stateObject = new IlwGoogleStateObject
+            {
+                ExpiredAuthEmailSent = state.ExpiredAuthEmailSent,
+            };
+
+            var json = JsonConvert.SerializeObject(stateObject);
+            return this.WriteGoogleBlob(json);
+        }
+
+        public Task SaveIssues(IIlwIssuesState state)
+        {
+            var stateObject = new IlwIssuesStateObject
             {
                 LastRunTime = state.LastRunTime,
-                Repos = state.IssuesByRepo.Select(x => new IlwStateObject.Repo
+                Repos = state.IssuesByRepo.Select(x => new IlwIssuesStateObject.Repo
                 {
                     FullName = x.Key,
                     IssueNumbers = x.Value.ToArray(),
@@ -78,26 +118,51 @@ namespace IssueLabelWatcherWebJob
             };
 
             var json = JsonConvert.SerializeObject(stateObject);
-            return this.WriteBlob(json);
+            return this.WriteIssuesBlob(json);
         }
 
-        private async Task<CloudBlockBlob> GetBlob()
+        private async Task<CloudBlobContainer> GetContainer()
         {
-            if (_blob == null)
+            if (_container == null)
             {
                 var storageAccount = CloudStorageAccount.Parse(_configuration.StorageAccountConnectionString);
                 var blobClient = storageAccount.CreateCloudBlobClient();
                 var container = blobClient.GetContainerReference("issue-label-watcher");
                 await container.CreateIfNotExistsAsync();
-                _blob = container.GetBlockBlobReference("state");
+                _container = container;
             }
 
-            return _blob;
+            return _container;
         }
 
-        private async Task<string?> ReadBlob()
+        private async Task<CloudBlockBlob> GetBlob(string blobName)
         {
-            var blob = await this.GetBlob();
+            var container = await this.GetContainer();
+            return container.GetBlockBlobReference(blobName);
+        }
+
+        private async Task<CloudBlockBlob> GetGoogleBlob()
+        {
+            if (_googleBlob == null)
+            {
+                _googleBlob = await this.GetBlob("googleState");
+            }
+
+            return _googleBlob;
+        }
+
+        private async Task<CloudBlockBlob> GetIssuesBlob()
+        {
+            if (_issuesBlob == null)
+            {
+                _issuesBlob = await this.GetBlob("state");
+            }
+
+            return _issuesBlob;
+        }
+
+        private async Task<string?> ReadBlob(CloudBlockBlob blob)
+        {
             if (!await blob.ExistsAsync())
             {
                 return null;
@@ -106,19 +171,47 @@ namespace IssueLabelWatcherWebJob
             return await blob.DownloadTextAsync();
         }
 
-        private async Task WriteBlob(string content)
+        private async Task<string?> ReadGoogleBlob()
         {
-            var blob = await this.GetBlob();
+            var blob = await this.GetGoogleBlob();
+            return await this.ReadBlob(blob);
+        }
+
+        private async Task<string?> ReadIssuesBlob()
+        {
+            var blob = await this.GetIssuesBlob();
+            return await this.ReadBlob(blob);
+        }
+
+        private async Task WriteBlob(CloudBlockBlob blob, string content)
+        {
             await blob.UploadTextAsync(content);
+        }
+
+        private async Task WriteGoogleBlob(string content)
+        {
+            var blob = await this.GetGoogleBlob();
+            await this.WriteBlob(blob, content);
+        }
+
+        private async Task WriteIssuesBlob(string content)
+        {
+            var blob = await this.GetIssuesBlob();
+            await this.WriteBlob(blob, content);
         }
     }
 
-    public class IlwStateObject
+    public class IlwGoogleStateObject
+    {
+        public bool ExpiredAuthEmailSent { get; set; }
+    }
+
+    public class IlwIssuesStateObject
     {
         public DateTime? LastRunTime { get; set; }
         public Repo[] Repos { get; set; }
 
-        public IlwStateObject()
+        public IlwIssuesStateObject()
         {
             this.Repos = new Repo[0];
         }
